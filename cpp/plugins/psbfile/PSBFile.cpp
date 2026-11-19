@@ -470,8 +470,8 @@ namespace PSB {
             return false;
         }
 
-        if(_header.version < 1 || _header.version > 3) {
-            G_PluginLog.critical("not support psb file format version > 3");
+        if(_header.version < 1 || _header.version > 4) {
+            G_PluginLog.critical("not support psb file format version > 4");
             return false;
         }
 
@@ -481,6 +481,12 @@ namespace PSB {
               _header.offsetChunkLengths, _header.offsetChunkData,
               _header.offsetEntries })
             seekChecked(stream, offset, 0);
+        if(_header.version >= 4) {
+            for(const auto offset : { _header.offsetExtraChunkOffsets,
+                                      _header.offsetExtraChunkLengths,
+                                      _header.offsetExtraChunkData })
+                seekChecked(stream, offset, 0);
+        }
         seekChecked(stream, _header.offsetStrings);
         stringOffsets = PSB::PSBArray(
             stream->ReadI8LE() -

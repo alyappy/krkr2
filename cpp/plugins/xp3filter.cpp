@@ -1,9 +1,11 @@
 #include "ncbind.hpp"
 #include "XP3Archive.h"
 #include "SystemIntf.h"
+#include "SysInitIntf.h"
 #include "tjsNative.h"
 #include <assert.h>
 #include <list>
+#include <mutex>
 #include "tjsDebug.h"
 #include "xp3filter.h"
 #include "ThreadIntf.h"
@@ -462,24 +464,43 @@ static XP3FilterDecoder *FetchXP3Decoder() {
     return ret.get();
 }
 #endif
-tjs_int TVPXP3ArchiveContentFilterWrapper(const ttstr &filepath,
-                                          const ttstr &archivename,
-                                          tjs_uint64 filesize,
-                                          tTJSVariant *ctx) {
-    if(!_ManagedFilterInited)
-        return 0;
+static std::mutex sGlobalFilterMtx;
+static tTJSVariantClosure sGlobalManagedDecoder(nullptr, nullptr);
+static tTJSVariantClosure sGlobalManagedFilter(nullptr, nullptr);
 
-    XP3FilterDecoder *decoder = FetchXP3Decoder();
-    if(!decoder->ManagedFilter.Object)
+static void ClearGlobalXP3Filters() {
+    std::lock_guard<std::mutex> lk(sGlobalFilterMtx);
+    if(sGlobalManagedDecoder.Object || sGlobalManagedDecoder.ObjThis) {
+        sGlobalManagedDecoder.Release();
+        sGlobalManagedDecoder = tTJSVariantClosure(nullptr, nullptr);
+    }
+    if(sGlobalManagedFilter.Object || sGlobalManagedFilter.ObjThis) {
+        sGlobalManagedFilter.Release();
+        sGlobalManagedFilter = tTJSVariantClosure(nullptr, nullptr);
+    }
+    if(sXP3FilterScript.IsEmpty()) {
+        TVPSetXP3ArchiveExtractionFilter(nullptr);
+        TVPSetXP3ArchiveContentFilter(nullptr);
+    }
+}
+
+static tTVPAtExit sClearGlobalXP3FiltersAtExit(TVP_ATEXIT_PRI_PREPARE,
+                                               ClearGlobalXP3Filters);
+
+static tjs_int InvokeXP3ContentFilterClosure(tTJSVariantClosure &closure,
+                                             const ttstr &filepath,
+                                             const ttstr &archivename,
+                                             tjs_uint64 filesize,
+                                             tTJSVariant *ctx) {
+    if(!closure.Object)
         return 0;
     tTJSVariant FilePath(filepath);
     tTJSVariant ArcName(archivename);
     tTJSVariant FileSize((tjs_int64)filesize);
     tTJSVariant *vars[] = { &FilePath, &ArcName, &FileSize };
     tTJSVariant result;
-    decoder->ManagedFilter.FuncCall(0, nullptr, nullptr, &result,
-                                    sizeof(vars) / sizeof(vars[0]), vars,
-                                    nullptr);
+    closure.FuncCall(0, nullptr, nullptr, &result,
+                     sizeof(vars) / sizeof(vars[0]), vars, nullptr);
     tjs_int ret = 0;
     if(result.Type() == tvtObject) {
         iTJSDispatch2 *arr = result.AsObjectNoAddRef();
@@ -490,44 +511,197 @@ tjs_int TVPXP3ArchiveContentFilterWrapper(const ttstr &filepath,
     return ret;
 }
 
+static void InvokeXP3ExtractionFilterClosure(tTJSVariantClosure &closure,
+                                             tTVPXP3ExtractionFilterInfo *info,
+                                             tTJSVariant *ctx) {
+    if(!closure.Object)
+        return;
+    tTJSVariant FileHash = (tjs_int64)info->FileHash;
+    tTJSVariant Offset = (tjs_int64)info->Offset;
+    CBinaryAccessor *buf =
+        new CBinaryAccessor((unsigned char *)info->Buffer, info->BufferSize);
+    tTJSVariant Buffer(buf);
+    buf->Release();
+    tTJSVariant BufferSize((tjs_int64)info->BufferSize);
+    tTJSVariant FileName(info->FileName);
+    tTJSVariant *vars[] = { &FileHash,   &Offset,   &Buffer,
+                            &BufferSize, &FileName, ctx };
+#if defined(WIN32) && defined(CHECK_CXDEC)
+    unsigned char *pBackup = new unsigned char[info->BufferSize],
+                  *pBuffer = (unsigned char *)info->Buffer;
+    memcpy(pBackup, info->Buffer, info->BufferSize);
+#endif
+    closure.FuncCall(0, nullptr, nullptr, nullptr,
+                     sizeof(vars) / sizeof(vars[0]), vars, nullptr);
+#if defined(WIN32) && defined(CHECK_CXDEC)
+    cxdec_decode(&dec_callback, info->FileHash, info->Offset, pBackup,
+                 info->BufferSize);
+    for(int i = 0; i < info->BufferSize; ++i) {
+        if(pBackup[i] != pBuffer[i]) {
+            assert(false);
+            break;
+        }
+    }
+    delete[] pBackup;
+#endif
+}
+
+tjs_int TVPXP3ArchiveContentFilterWrapper(const ttstr &filepath,
+                                          const ttstr &archivename,
+                                          tjs_uint64 filesize,
+                                          tTJSVariant *ctx) {
+    if(!sXP3FilterScript.IsEmpty()) {
+        if(!_ManagedFilterInited)
+            return 0;
+
+        XP3FilterDecoder *decoder = FetchXP3Decoder();
+        return InvokeXP3ContentFilterClosure(decoder->ManagedFilter, filepath,
+                                             archivename, filesize, ctx);
+    }
+
+    std::lock_guard<std::mutex> lk(sGlobalFilterMtx);
+    return InvokeXP3ContentFilterClosure(sGlobalManagedFilter, filepath,
+                                         archivename, filesize, ctx);
+}
+
 void TVP_tTVPXP3ArchiveExtractionFilter_CONVENTION
 TVPXP3ArchiveExtractionFilterWrapper(tTVPXP3ExtractionFilterInfo *info,
                                      tTJSVariant *ctx) {
     if(info->SizeOfSelf != sizeof(tTVPXP3ExtractionFilterInfo))
         TVPThrowExceptionMessage(
             TJS_W("Incompatible tTVPXP3ExtractionFilterInfo size"));
-    XP3FilterDecoder *decoder = FetchXP3Decoder();
-    if(decoder->ManagedDecoder.Object) {
-        tTJSVariant FileHash = (tjs_int64)info->FileHash;
-        tTJSVariant Offset = (tjs_int64)info->Offset;
-        CBinaryAccessor *buf = new CBinaryAccessor(
-            (unsigned char *)info->Buffer, info->BufferSize);
-        tTJSVariant Buffer(buf);
-        buf->Release();
-        tTJSVariant BufferSize((tjs_int64)info->BufferSize);
-        tTJSVariant FileName(info->FileName);
-        tTJSVariant *vars[] = { &FileHash,   &Offset,   &Buffer,
-                                &BufferSize, &FileName, ctx };
-#if defined(WIN32) && defined(CHECK_CXDEC)
-        unsigned char *pBackup = new unsigned char[info->BufferSize],
-                      *pBuffer = (unsigned char *)info->Buffer;
-        memcpy(pBackup, info->Buffer, info->BufferSize);
-#endif
-        decoder->ManagedDecoder.FuncCall(0, nullptr, nullptr, nullptr,
-                                         sizeof(vars) / sizeof(vars[0]), vars,
-                                         nullptr);
-#if defined(WIN32) && defined(CHECK_CXDEC)
-        cxdec_decode(&dec_callback, info->FileHash, info->Offset, pBackup,
-                     info->BufferSize);
-        for(int i = 0; i < info->BufferSize; ++i) {
-            if(pBackup[i] != pBuffer[i]) {
-                assert(false);
-                break;
-            }
-        }
-        delete[] pBackup;
-#endif
+    if(!sXP3FilterScript.IsEmpty()) {
+        XP3FilterDecoder *decoder = FetchXP3Decoder();
+        InvokeXP3ExtractionFilterClosure(decoder->ManagedDecoder, info, ctx);
+        return;
     }
+
+    std::lock_guard<std::mutex> lk(sGlobalFilterMtx);
+    InvokeXP3ExtractionFilterClosure(sGlobalManagedDecoder, info, ctx);
+}
+
+class GlobalXP3FilterRegister : public tTJSDispatch {
+    typedef tTJSDispatch inherited;
+
+public:
+    GlobalXP3FilterRegister() {
+        if(TJSObjectHashMapEnabled())
+            TJSAddObjectHashRecord(this);
+    }
+    ~GlobalXP3FilterRegister() {
+        if(TJSObjectHashMapEnabled())
+            TJSRemoveObjectHashRecord(this);
+    }
+
+    tjs_error IsInstanceOf(tjs_uint32 flag, const tjs_char *membername,
+                           tjs_uint32 *hint, const tjs_char *classname,
+                           iTJSDispatch2 *objthis) override {
+        if(membername == nullptr && !TJS_strcmp(classname, TJS_W("Function")))
+            return TJS_S_TRUE;
+        return inherited::IsInstanceOf(flag, membername, hint, classname,
+                                       objthis);
+    }
+
+    tjs_error FuncCall(tjs_uint32 flag, const tjs_char *membername,
+                       tjs_uint32 *hint, tTJSVariant *result, tjs_int numparams,
+                       tTJSVariant **param, iTJSDispatch2 *objthis) override {
+        if(membername)
+            return inherited::FuncCall(flag, membername, hint, result,
+                                       numparams, param, objthis);
+        if(result)
+            result->Clear();
+        if(numparams < 1)
+            return TJS_E_BADPARAMCOUNT;
+
+        std::lock_guard<std::mutex> lk(sGlobalFilterMtx);
+        if(sGlobalManagedDecoder.Object || sGlobalManagedDecoder.ObjThis) {
+            sGlobalManagedDecoder.Release();
+            sGlobalManagedDecoder = tTJSVariantClosure(nullptr, nullptr);
+        }
+        if(param[0]->Type() == tvtObject &&
+           param[0]->AsObjectNoAddRef() != nullptr) {
+            sGlobalManagedDecoder = param[0]->AsObjectClosure();
+            TVPSetXP3ArchiveExtractionFilter(
+                TVPXP3ArchiveExtractionFilterWrapper);
+        } else if(sXP3FilterScript.IsEmpty()) {
+            TVPSetXP3ArchiveExtractionFilter(nullptr);
+        }
+        return TJS_S_OK;
+    }
+};
+
+class GlobalXP3ContentFilterRegister : public tTJSDispatch {
+    typedef tTJSDispatch inherited;
+
+public:
+    GlobalXP3ContentFilterRegister() {
+        if(TJSObjectHashMapEnabled())
+            TJSAddObjectHashRecord(this);
+    }
+    ~GlobalXP3ContentFilterRegister() {
+        if(TJSObjectHashMapEnabled())
+            TJSRemoveObjectHashRecord(this);
+    }
+
+    tjs_error IsInstanceOf(tjs_uint32 flag, const tjs_char *membername,
+                           tjs_uint32 *hint, const tjs_char *classname,
+                           iTJSDispatch2 *objthis) override {
+        if(membername == nullptr && !TJS_strcmp(classname, TJS_W("Function")))
+            return TJS_S_TRUE;
+        return inherited::IsInstanceOf(flag, membername, hint, classname,
+                                       objthis);
+    }
+
+    tjs_error FuncCall(tjs_uint32 flag, const tjs_char *membername,
+                       tjs_uint32 *hint, tTJSVariant *result, tjs_int numparams,
+                       tTJSVariant **param, iTJSDispatch2 *objthis) override {
+        if(membername)
+            return inherited::FuncCall(flag, membername, hint, result,
+                                       numparams, param, objthis);
+        if(result)
+            result->Clear();
+        if(numparams < 1)
+            return TJS_E_BADPARAMCOUNT;
+
+        std::lock_guard<std::mutex> lk(sGlobalFilterMtx);
+        if(sGlobalManagedFilter.Object || sGlobalManagedFilter.ObjThis) {
+            sGlobalManagedFilter.Release();
+            sGlobalManagedFilter = tTJSVariantClosure(nullptr, nullptr);
+        }
+        if(param[0]->Type() == tvtObject &&
+           param[0]->AsObjectNoAddRef() != nullptr) {
+            sGlobalManagedFilter = param[0]->AsObjectClosure();
+            TVPSetXP3ArchiveContentFilter(TVPXP3ArchiveContentFilterWrapper);
+        } else if(sXP3FilterScript.IsEmpty()) {
+            TVPSetXP3ArchiveContentFilter(nullptr);
+        }
+        return TJS_S_OK;
+    }
+};
+
+static void RegisterGlobalXP3FilterMethods() {
+    iTJSDispatch2 *global = TVPGetScriptDispatch();
+    if(!global)
+        return;
+    tTJSVariant storagesVar;
+    if(TJS_SUCCEEDED(global->PropGet(0, TJS_W("Storages"), nullptr,
+                                     &storagesVar, global)) &&
+       storagesVar.Type() == tvtObject && storagesVar.AsObjectNoAddRef()) {
+        iTJSDispatch2 *storages = storagesVar.AsObjectNoAddRef();
+        iTJSDispatch2 *dsp = new GlobalXP3FilterRegister();
+        tTJSVariant val(dsp);
+        dsp->Release();
+        storages->PropSet(TJS_MEMBERENSURE | TJS_IGNOREPROP | TJS_STATICMEMBER,
+                          TJS_W("setXP3ArchiveExtractionFilter"), nullptr, &val,
+                          storages);
+        dsp = new GlobalXP3ContentFilterRegister();
+        val = tTJSVariant(dsp);
+        dsp->Release();
+        storages->PropSet(TJS_MEMBERENSURE | TJS_IGNOREPROP | TJS_STATICMEMBER,
+                          TJS_W("setXP3ArchiveContentFilter"), nullptr, &val,
+                          storages);
+    }
+    global->Release();
 }
 
 void TVPSetXP3FilterScript(ttstr content) {
@@ -537,32 +711,43 @@ void TVPSetXP3FilterScript(ttstr content) {
         }
         _thread_decoders.clear();
     }
+    sXP3FilterScript = content;
     if(content.IsEmpty()) {
-        TVPSetXP3ArchiveExtractionFilter(nullptr);
-        TVPSetXP3ArchiveContentFilter(nullptr);
+        std::lock_guard<std::mutex> lk(sGlobalFilterMtx);
+        TVPSetXP3ArchiveExtractionFilter(
+            sGlobalManagedDecoder.Object ? TVPXP3ArchiveExtractionFilterWrapper
+                                         : nullptr);
+        TVPSetXP3ArchiveContentFilter(sGlobalManagedFilter.Object
+                                          ? TVPXP3ArchiveContentFilterWrapper
+                                          : nullptr);
     } else {
         TVPSetXP3ArchiveExtractionFilter(TVPXP3ArchiveExtractionFilterWrapper);
         TVPSetXP3ArchiveContentFilter(TVPXP3ArchiveContentFilterWrapper);
     }
-    sXP3FilterScript = content;
 }
 
 static void PostRegistCallback() {
-    ttstr path = TVPGetAppPath() + TJS_W("xp3filter.tjs");
-    if(TVPIsExistentStorageNoSearch(path)) {
-        iTJSTextReadStream *stream = TVPCreateTextStreamForRead(path, "");
-        try {
-            stream->Read(sXP3FilterScript, 0);
-        } catch(...) {
+    RegisterGlobalXP3FilterMethods();
+    const ttstr appPath = TVPGetAppPath();
+    if(!appPath.IsEmpty()) {
+        ttstr path = appPath + TJS_W("xp3filter.tjs");
+        if(TVPIsExistentStorageNoSearch(path)) {
+            iTJSTextReadStream *stream = TVPCreateTextStreamForRead(path, "");
+            try {
+                stream->Read(sXP3FilterScript, 0);
+            } catch(...) {
+                stream->Destruct();
+                throw;
+            }
             stream->Destruct();
-            throw;
+            //    AddXP3Decoder();
+            TVPSetXP3ArchiveExtractionFilter(
+                TVPXP3ArchiveExtractionFilterWrapper);
+            TVPSetXP3ArchiveContentFilter(TVPXP3ArchiveContentFilterWrapper);
         }
-        stream->Destruct();
-        //    AddXP3Decoder();
-        TVPSetXP3ArchiveExtractionFilter(TVPXP3ArchiveExtractionFilterWrapper);
-        TVPSetXP3ArchiveContentFilter(TVPXP3ArchiveContentFilterWrapper);
     }
     // TVPSetXP3ArchiveExtractionFilter(TVPXP3ArchiveExtractionFilter);
 }
 
 NCB_POST_REGIST_CALLBACK(PostRegistCallback);
+NCB_PRE_UNREGIST_CALLBACK(ClearGlobalXP3Filters);

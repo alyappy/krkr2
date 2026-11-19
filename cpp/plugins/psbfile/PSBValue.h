@@ -207,10 +207,20 @@ namespace PSB {
                     "PSB array count width exceeds 32 bits");
             std::uint32_t count{};
             stream->ReadBuffer(&count, n);
-            entryLength = stream->ReadI8LE() -
-                static_cast<std::uint32_t>(PSBObjType::NumberN8);
+            const auto rawEntryType =
+                static_cast<std::uint8_t>(stream->ReadI8LE());
+            const auto minEntryType =
+                static_cast<std::uint8_t>(PSBObjType::NumberN8);
+            if(rawEntryType < minEntryType ||
+               stream->GetPosition() > stream->GetSize())
+                throw std::runtime_error("Invalid or truncated PSB array");
+            entryLength = rawEntryType - minEntryType;
+            if(count == 0) {
+                if(entryLength > 4)
+                    throw std::runtime_error("Invalid or truncated PSB array");
+                return;
+            }
             if(entryLength < 1 || entryLength > 4 ||
-               stream->GetPosition() > stream->GetSize() ||
                count >
                    (stream->GetSize() - stream->GetPosition()) / entryLength)
                 throw std::runtime_error("Invalid or truncated PSB array");

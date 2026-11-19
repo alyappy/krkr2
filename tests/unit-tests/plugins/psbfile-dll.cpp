@@ -10,9 +10,17 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "PluginIntf.h"
+#include "ScriptMgnIntf.h"
+#include "StorageIntf.h"
+#include "SysInitIntf.h"
+#include "UtilStreams.h"
+#include "XP3Archive.h"
+#include "ncbind.hpp"
 #include "psbfile/PSBFile.h"
 #include "psbfile/resources/ImageMetadata.h"
 #include "test_config.h"
+#include "tjs.h"
 
 TEST_CASE("read psbfile ezsave.pimg") {
     PSB::PSBFile f;
@@ -239,4 +247,128 @@ TEST_CASE("texture index parsing preserves digit and overflow behavior",
     REQUIRE_FALSE(parse("tex999999999999999999999"));
     REQUIRE_FALSE(parse("tex-without-digits"));
     REQUIRE_FALSE(parse("other123"));
+}
+
+namespace {
+    std::vector<std::uint8_t> buildMinimalPsb(std::uint16_t version) {
+        std::vector<std::uint8_t> buf;
+        auto pushU16 = [&](std::uint16_t v) {
+            buf.push_back(static_cast<std::uint8_t>(v & 0xFF));
+            buf.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFF));
+        };
+        auto pushU32 = [&](std::uint32_t v) {
+            for(int i = 0; i < 4; ++i)
+                buf.push_back(static_cast<std::uint8_t>((v >> (i * 8)) & 0xFF));
+        };
+        const std::uint32_t headerSize =
+            PSB::PSBHeader::GetHeaderLength(version);
+        // Empty PSBArray: ArrayN1 (0x0D), count=0, NumberN8 (0x0C => 0-width)
+        const std::uint32_t emptyArrayOff = headerSize;
+        const std::uint32_t namesOff = emptyArrayOff + 3;
+        // charset=[0], namesData=[0], nameIndexes=[]
+        const std::uint32_t entriesOff = namesOff + 12;
+        const std::uint32_t stringsDataOff = entriesOff + 7;
+
+        buf.insert(buf.end(), { 'P', 'S', 'B', '\0' });
+        pushU16(version);
+        pushU16(0); // encrypt
+        pushU32(0); // offsetEncrypt
+        pushU32(namesOff);
+        pushU32(emptyArrayOff); // offsetStrings
+        pushU32(stringsDataOff); // offsetStringsData
+        pushU32(emptyArrayOff); // offsetChunkOffsets
+        pushU32(emptyArrayOff); // offsetChunkLengths
+        pushU32(stringsDataOff); // offsetChunkData
+        pushU32(entriesOff); // offsetEntries
+        if(version > 2) {
+            pushU32(0); // checksum
+        }
+        if(version > 3) {
+            pushU32(emptyArrayOff); // offsetExtraChunkOffsets
+            pushU32(emptyArrayOff); // offsetExtraChunkLengths
+            pushU32(stringsDataOff); // offsetExtraChunkData
+        }
+        REQUIRE(buf.size() == headerSize);
+
+        // emptyArrayOff: empty 0-width PSBArray
+        buf.insert(buf.end(), { 0x0D, 0x00, 0x0C });
+
+        // namesOff: charset=[0] (4B), namesData=[0] (4B), nameIndexes=[] (3B) +
+        // 1B pad
+        buf.insert(buf.end(), { 0x0D, 0x01, 0x0D, 0x00 });
+        buf.insert(buf.end(), { 0x0D, 0x01, 0x0D, 0x00 });
+        buf.insert(buf.end(), { 0x0D, 0x00, 0x0C, 0x00 });
+
+        // entriesOff: empty Objects dictionary (0x21 + empty names + empty
+        // offsets)
+        buf.insert(buf.end(), { 0x21, 0x0D, 0x00, 0x0C, 0x0D, 0x00, 0x0C });
+
+        // stringsDataOff: terminator byte
+        buf.push_back(0x00);
+        return buf;
+    }
+} // namespace
+
+TEST_CASE(
+    "PSBArray accepts empty array with zero-width entry type in scn files",
+    "[plugins][psbfile]") {
+    const std::uint8_t rawEmpty[] = { 0x00, 0x0C }; // count=0, entryLength=0
+    tTVPMemoryStream emptyStream(rawEmpty, sizeof(rawEmpty));
+    PSB::PSBArray arr(1, &emptyStream);
+    REQUIRE(arr.value.empty());
+    REQUIRE(arr.entryLength == 0);
+
+    const std::uint8_t rawNonEmptyZeroWidth[] = { 0x01, 0x0C };
+    tTVPMemoryStream badStream(rawNonEmptyZeroWidth,
+                               sizeof(rawNonEmptyZeroWidth));
+    REQUIRE_THROWS_AS(PSB::PSBArray(1, &badStream), std::runtime_error);
+}
+
+TEST_CASE("PSBFile loads version 4 stream and rejects version 5",
+          "[plugins][psbfile]") {
+    auto v4Bytes = buildMinimalPsb(4);
+    tTVPMemoryStream v4Stream(v4Bytes.data(), v4Bytes.size());
+    PSB::PSBFile v4File;
+    REQUIRE(v4File.loadPSBStream(&v4Stream));
+    REQUIRE(v4File.getPSBHeader().version == 4);
+    REQUIRE(v4File.getObjects() != nullptr);
+
+    auto v5Bytes = buildMinimalPsb(5);
+    tTVPMemoryStream v5Stream(v5Bytes.data(), v5Bytes.size());
+    PSB::PSBFile v5File;
+    REQUIRE_FALSE(v5File.loadPSBStream(&v5Stream));
+}
+
+extern tTVPXP3ArchiveExtractionFilter TVPXP3ArchiveExtractionFilter;
+
+TEST_CASE("xp3filter registers Storages.setXP3ArchiveExtractionFilter on main "
+          "script engine",
+          "[plugins][xp3filter]") {
+    const ttstr testDir = TVPNormalizeStorageName(ttstr(TEST_FILES_PATH "/"));
+    TVPProjectDir = testDir;
+    TVPSetCurrentDirectory(testDir);
+    if(!TVPGetScriptEngine()) {
+        TVPInitScriptEngine();
+    }
+    ncbAutoRegister::AllRegist();
+    REQUIRE(ncbAutoRegister::LoadModule(TJS_W("xp3filter.dll")));
+
+    TVPExecuteScript(
+        TJS_W("Storages.setXP3ArchiveExtractionFilter(function(h, o, b, l) {"
+              "  for(var i = 0; i < l; ++i) b[i] ^= 0x5A;"
+              "});"));
+
+    REQUIRE(TVPXP3ArchiveExtractionFilter != nullptr);
+    unsigned char buf[4] = { 0x10, 0x20, 0x30, 0x40 };
+    const ttstr name(TJS_W("test.bin"));
+    tTVPXP3ExtractionFilterInfo info(0, buf, sizeof(buf), 0x1234, name);
+    tTJSVariant ctx;
+    TVPXP3ArchiveExtractionFilter(&info, &ctx);
+    REQUIRE(buf[0] == (0x10 ^ 0x5A));
+    REQUIRE(buf[1] == (0x20 ^ 0x5A));
+    REQUIRE(buf[2] == (0x30 ^ 0x5A));
+    REQUIRE(buf[3] == (0x40 ^ 0x5A));
+
+    TVPExecuteScript(TJS_W("Storages.setXP3ArchiveExtractionFilter(void);"));
+    REQUIRE(TVPXP3ArchiveExtractionFilter == nullptr);
 }
