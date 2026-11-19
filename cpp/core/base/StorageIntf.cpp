@@ -1000,6 +1000,14 @@ void TVPRemoveFromStorageCache(const ttstr &name) {
     TVPAutoPathCache.Delete(name);
 }
 
+namespace {
+    tTVPInternalPluginExistsFunc TVPInternalPluginExistsFunc = nullptr;
+}
+
+void TVPRegisterInternalPluginExistsFunc(tTVPInternalPluginExistsFunc func) {
+    TVPInternalPluginExistsFunc = func;
+}
+
 //---------------------------------------------------------------------------
 // tTJSNC_Storages
 //---------------------------------------------------------------------------
@@ -1063,8 +1071,14 @@ TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ getPlacedPath) {
 
     ttstr path = *param[0];
 
-    if(result)
-        *result = TVPGetPlacedPath(path);
+    if(result) {
+        ttstr placed = TVPGetPlacedPath(path);
+        if(placed.IsEmpty() && TVPInternalPluginExistsFunc &&
+           TVPInternalPluginExistsFunc(path)) {
+            placed = TVPNormalizeStorageName(path);
+        }
+        *result = placed;
+    }
 
     return TJS_S_OK;
 }
@@ -1076,8 +1090,14 @@ TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ isExistentStorage) {
 
     ttstr path = *param[0];
 
-    if(result)
-        *result = (tjs_int)TVPIsExistentStorage(path);
+    if(result) {
+        bool exists = TVPIsExistentStorage(path);
+        if(!exists && TVPInternalPluginExistsFunc &&
+           TVPInternalPluginExistsFunc(path)) {
+            exists = true;
+        }
+        *result = (tjs_int)exists;
+    }
 
     return TJS_S_OK;
 }

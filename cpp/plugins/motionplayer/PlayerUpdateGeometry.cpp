@@ -760,10 +760,11 @@ namespace motion {
             if(node.activeSlot().done) {
                 node.drawFlag = false;
             } else if(node.stencilType == 0) {
-                const bool emoteDrawableStencilZero = _runtime->activeMotion &&
-                    !_runtime->activeMotion->variableLabels.empty() &&
+                const bool drawableStencilZero = _runtime->activeMotion &&
+                    (!_runtime->activeMotion->variableLabels.empty() ||
+                     node.nodeType == 0) &&
                     node.hasSource;
-                if(!emoteDrawableStencilZero) {
+                if(!drawableStencilZero) {
                     node.drawFlag = false;
                 } else if(!node.accumulated.active) {
                     node.drawFlag = false;

@@ -372,3 +372,30 @@ TEST_CASE("xp3filter registers Storages.setXP3ArchiveExtractionFilter on main "
     TVPExecuteScript(TJS_W("Storages.setXP3ArchiveExtractionFilter(void);"));
     REQUIRE(TVPXP3ArchiveExtractionFilter == nullptr);
 }
+
+TEST_CASE("Storages reports virtual internal plugins without breaking legacy "
+          "motion probes",
+          "[plugins][storage]") {
+    const ttstr testDir = TVPNormalizeStorageName(ttstr(TEST_FILES_PATH "/"));
+    TVPProjectDir = testDir;
+    TVPSetCurrentDirectory(testDir);
+    if(!TVPGetScriptEngine()) {
+        TVPInitScriptEngine();
+    }
+    ncbAutoRegister::AllRegist();
+    TVPCreateNativeClass_Plugins()->Release();
+
+    tTJSVariant res;
+    TVPExecuteExpression(
+        TJS_W("Storages.isExistentStorage('plugin64/psbfile.dll')"), &res);
+    REQUIRE(res.AsInteger() == 1);
+
+    TVPExecuteExpression(
+        TJS_W("Storages.isExistentStorage('plugin64/motionplayer.dll')"), &res);
+    REQUIRE(res.AsInteger() == 0);
+
+    TVPExecuteExpression(
+        TJS_W("Storages.isExistentStorage('plugin64/nonexistent_plugin.dll')"),
+        &res);
+    REQUIRE(res.AsInteger() == 0);
+}

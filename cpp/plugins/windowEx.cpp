@@ -20,6 +20,7 @@ typedef unsigned long ULONG_PTR;
 #include "GraphicsLoaderIntf.h"
 #include "EventIntf.h"
 #include "WindowImpl.h"
+#include "TVPScreen.h"
 
 #define NCB_MODULE_NAME TJS_W("windowEx.dll")
 #ifndef _WIN32
@@ -363,16 +364,28 @@ struct WindowEx {
     // minimize, maximize, showRestore
     static tjs_error minimize(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                               iTJSDispatch2 *obj) {
+        if(WindowEx *self = GetInstance(obj)) {
+            self->minimized = true;
+            self->maximized = false;
+        }
         return TJS_S_OK;
     }
 
     static tjs_error maximize(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                               iTJSDispatch2 *obj) {
+        if(WindowEx *self = GetInstance(obj)) {
+            self->maximized = true;
+            self->minimized = false;
+        }
         return TJS_S_OK;
     }
 
     static tjs_error showRestore(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                  iTJSDispatch2 *obj) {
+        if(WindowEx *self = GetInstance(obj)) {
+            self->maximized = false;
+            self->minimized = false;
+        }
         return TJS_S_OK;
     }
 
@@ -441,27 +454,46 @@ struct WindowEx {
     // property maximized box
     static tjs_error getMaximizeBox(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                     iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        if(r)
+            *r = (self == nullptr || self->maximizeBox);
         return TJS_S_OK;
     }
 
     static tjs_error setMaximizeBox(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                     iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        if(self == nullptr)
+            return TJS_E_ACCESSDENYED;
+        if(n > 0 && p && p[0])
+            self->maximizeBox = !!p[0]->AsInteger();
         return TJS_S_OK;
     }
 
     // property minimized box
     static tjs_error getMinimizeBox(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                     iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        if(r)
+            *r = (self == nullptr || self->minimizeBox);
         return TJS_S_OK;
     }
 
     static tjs_error setMinimizeBox(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                     iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        if(self == nullptr)
+            return TJS_E_ACCESSDENYED;
+        if(n > 0 && p && p[0])
+            self->minimizeBox = !!p[0]->AsInteger();
         return TJS_S_OK;
     }
 
     // property maximized
-    static bool isMaximized(iTJSDispatch2 *obj) { return true; }
+    static bool isMaximized(iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        return self != nullptr && self->maximized;
+    }
 
     static tjs_error getMaximized(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
@@ -472,11 +504,22 @@ struct WindowEx {
 
     static tjs_error setMaximized(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        if(self == nullptr)
+            return TJS_E_ACCESSDENYED;
+        if(n > 0 && p && p[0]) {
+            self->maximized = !!p[0]->AsInteger();
+            if(self->maximized)
+                self->minimized = false;
+        }
         return TJS_S_OK;
     }
 
     // property minimized
-    static bool isMinimized(iTJSDispatch2 *obj) { return false; }
+    static bool isMinimized(iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        return self != nullptr && self->minimized;
+    }
 
     static tjs_error getMinimized(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
@@ -487,6 +530,14 @@ struct WindowEx {
 
     static tjs_error setMinimized(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
+        WindowEx *self = GetInstance(obj);
+        if(self == nullptr)
+            return TJS_E_ACCESSDENYED;
+        if(n > 0 && p && p[0]) {
+            self->minimized = !!p[0]->AsInteger();
+            if(self->minimized)
+                self->maximized = false;
+        }
         return TJS_S_OK;
     }
 
@@ -711,8 +762,9 @@ struct WindowEx {
     // ネイティブインスタンスの生成・破棄にあわせてレシーバを登録・解除する
     WindowEx(iTJSDispatch2 *obj) :
         self(obj), menuex(0), sysMenuModified(0), sysMenuModMap(0),
-        disableResize(false), disableMove(false), enableNCMEvent(false),
-        enableWinMsgHook(false) {
+        disableResize(false), disableMove(false), maximizeBox(true),
+        minimizeBox(true), maximized(false), minimized(false),
+        enableNCMEvent(false), enableWinMsgHook(false) {
         regist(true);
         setMessageHookAll(false);
     }
@@ -889,6 +941,10 @@ private:
         hasNcMsMove; //< メソッドが存在するかフラグ
     bool disableResize; //< サイズ変更禁止
     bool disableMove; //< ウィンドウ移動禁止
+    bool maximizeBox;
+    bool minimizeBox;
+    bool maximized;
+    bool minimized;
     bool enableNCMEvent; //< WM_SETCURSORコールバック
     bool enableWinMsgHook; //< メッセージフック有効
     DWORD bitHooks[0x0400 / 32];
@@ -959,12 +1015,14 @@ NCB_ATTACH_CLASS_WITH_HOOK(WindowEx, Window) {
 
     RawCallback(TJS_W("minimize"), &Class::minimize, 0);
     RawCallback(TJS_W("maximize"), &Class::maximize, 0);
-    // RawCallback(TJS_W("maximizeBox"), &Class::getMaximizeBox,
-    // &Class::setMaximizeBox, 0); RawCallback(TJS_W("minimizeBox"),
-    // &Class::getMinimizeBox,      &Class::setMinimizeBox, 0);
-    // RawCallback(TJS_W("maximized"),           &Class::getMaximized,
-    // &Class::setMaximized, 0); RawCallback(TJS_W("minimized"),
-    // &Class::getMinimized,      &Class::setMinimized, 0);
+    RawCallback(TJS_W("maximizeBox"), &Class::getMaximizeBox,
+                &Class::setMaximizeBox, 0);
+    RawCallback(TJS_W("minimizeBox"), &Class::getMinimizeBox,
+                &Class::setMinimizeBox, 0);
+    RawCallback(TJS_W("maximized"), &Class::getMaximized, &Class::setMaximized,
+                0);
+    RawCallback(TJS_W("minimized"), &Class::getMinimized, &Class::setMinimized,
+                0);
     RawCallback(TJS_W("showRestore"), &Class::showRestore, 0);
     RawCallback(TJS_W("resetWindowIcon"), &Class::resetWindowIcon, 0);
     RawCallback(TJS_W("setWindowIcon"), &Class::setWindowIcon, 0);
@@ -973,13 +1031,12 @@ NCB_ATTACH_CLASS_WITH_HOOK(WindowEx, Window) {
     RawCallback(TJS_W("getNormalRect"), &Class::getNormalRect, 0);
     RawCallback(TJS_W("disableResize"), &Class::getDisableResize,
                 &Class::setDisableResize, 0);
-    // RawCallback(TJS_W("disableMove"), &Class::getDisableMove,
-    // &Class::setDisableMove, 0);
+    RawCallback(TJS_W("disableMove"), &Class::getDisableMove,
+                &Class::setDisableMove, 0);
     RawCallback(TJS_W("setOverlayBitmap"), &Class::setOverlayBitmap, 0);
     RawCallback(TJS_W("exSystemMenu"), &Class::getExSystemMenu,
                 &Class::setExSystemMenu, 0);
-    // RawCallback(TJS_W("resetExSystemMenu"),
-    // &Class::resetExSystemMenu, 0);
+    RawCallback(TJS_W("resetExSystemMenu"), &Class::resetExSystemMenu, 0);
     RawCallback(TJS_W("enableNCMouseEvent"), &Class::getEnNCMEvent,
                 &Class::setEnNCMEvent, 0);
     RawCallback(TJS_W("ncHitTest"), &Class::nonClientHitTest, 0);
@@ -1418,18 +1475,96 @@ NCB_ATTACH_CLASS_WITH_HOOK(PadEx, Pad) {
 }
 ////////////////////////////////////////////////////////////////
 
+namespace {
+    struct VirtualDisplayBounds {
+        tjs_int left;
+        tjs_int top;
+        tjs_int width;
+        tjs_int height;
+
+        bool intersectsRect(tjs_int x, tjs_int y, tjs_int w, tjs_int h) const {
+            return w > 0 && h > 0 && width > 0 && height > 0 &&
+                x < left + width && x + w > left && y < top + height &&
+                y + h > top;
+        }
+    };
+
+    VirtualDisplayBounds GetVirtualDisplayBounds() {
+        tjs_int w = tTVPScreen::GetDesktopWidth();
+        tjs_int h = tTVPScreen::GetDesktopHeight();
+        if(w <= 0 || h <= 0) {
+            w = tTVPScreen::GetWidth();
+            h = tTVPScreen::GetHeight();
+        }
+        if(w <= 0)
+            w = 1280;
+        if(h <= 0)
+            h = 720;
+        return VirtualDisplayBounds{ tTVPScreen::GetDesktopLeft(),
+                                     tTVPScreen::GetDesktopTop(), w, h };
+    }
+
+    void SetMonitorRectDict(ncbDictionaryAccessor &parent, const tjs_char *key,
+                            const VirtualDisplayBounds &bounds) {
+        ncbDictionaryAccessor rect;
+        rect.SetValue(TJS_W("x"), bounds.left);
+        rect.SetValue(TJS_W("y"), bounds.top);
+        rect.SetValue(TJS_W("w"), bounds.width);
+        rect.SetValue(TJS_W("h"), bounds.height);
+        iTJSDispatch2 *disp = rect.GetDispatch();
+        tTJSVariant var(disp, disp);
+        parent.SetValue(key, var);
+    }
+
+    tTJSVariant MakeVirtualMonitorInfoDict(const VirtualDisplayBounds &bounds) {
+        ncbDictionaryAccessor info;
+        info.SetValue(TJS_W("name"), ttstr(TJS_W("DISPLAY1")));
+        info.SetValue(TJS_W("primary"), true);
+        info.SetValue(TJS_W("x"), bounds.left);
+        info.SetValue(TJS_W("y"), bounds.top);
+        info.SetValue(TJS_W("w"), bounds.width);
+        info.SetValue(TJS_W("h"), bounds.height);
+        SetMonitorRectDict(info, TJS_W("monitor"), bounds);
+        SetMonitorRectDict(info, TJS_W("work"), bounds);
+        iTJSDispatch2 *disp = info.GetDispatch();
+        return tTJSVariant(disp, disp);
+    }
+} // namespace
+
 struct System {
     static tjs_int getDoubleClickTime() { return -1; }
 
     static tjs_error getDisplayMonitors(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
                                         iTJSDispatch2 *objthis) {
+        if(!result)
+            return TJS_S_OK;
+        const VirtualDisplayBounds bounds = GetVirtualDisplayBounds();
+        bool include = true;
+        if(numparams >= 4 && param[0]->Type() != tvtVoid &&
+           param[1]->Type() != tvtVoid && param[2]->Type() != tvtVoid &&
+           param[3]->Type() != tvtVoid) {
+            const tjs_int x = param[0]->AsInteger();
+            const tjs_int y = param[1]->AsInteger();
+            const tjs_int w = param[2]->AsInteger();
+            const tjs_int h = param[3]->AsInteger();
+            include = bounds.intersectsRect(x, y, w, h);
+        }
+        ncbArrayAccessor arr;
+        if(include) {
+            arr.SetValue(0, MakeVirtualMonitorInfoDict(bounds));
+        }
+        iTJSDispatch2 *disp = arr.GetDispatch();
+        *result = tTJSVariant(disp, disp);
         return TJS_S_OK;
     }
 
     static tjs_error getMonitorInfo(tTJSVariant *result, tjs_int numparams,
                                     tTJSVariant **param,
                                     iTJSDispatch2 *objthis) {
+        if(!result)
+            return TJS_S_OK;
+        *result = MakeVirtualMonitorInfoDict(GetVirtualDisplayBounds());
         return TJS_S_OK;
     }
 

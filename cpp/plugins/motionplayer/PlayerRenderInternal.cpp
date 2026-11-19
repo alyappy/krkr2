@@ -697,12 +697,21 @@ namespace motion::internal::render_detail {
             return true;
         }
 
+        auto *dstBase =
+            static_cast<std::uint8_t *>(dstBmp->GetScanLineForWrite(dstY));
+        const auto *srcBase =
+            static_cast<const std::uint8_t *>(srcBmp->GetScanLine(srcY));
+        const auto dstPitch = dstBmp->GetPitchBytes();
+        const auto srcPitch = srcBmp->GetPitchBytes();
+        if(!dstBase || !srcBase || dstPitch == 0 || srcPitch == 0) {
+            return true;
+        }
+
         const bool thresholdMaskMode = playerStencilType == 0;
         for(int y = 0; y < height; ++y) {
-            auto *dstRow = static_cast<std::uint8_t *>(
-                dstBmp->GetScanLineForWrite(dstY + y));
-            const auto *srcRow = static_cast<const std::uint8_t *>(
-                srcBmp->GetScanLine(srcY + y));
+            auto *dstRow = dstBase + static_cast<std::ptrdiff_t>(y) * dstPitch;
+            const auto *srcRow =
+                srcBase + static_cast<std::ptrdiff_t>(y) * srcPitch;
             for(int x = 0; x < width; ++x) {
                 auto *dstPixel = dstRow + (dstX + x) * 4;
                 const auto *srcPixel = srcRow + (srcX + x) * 4;

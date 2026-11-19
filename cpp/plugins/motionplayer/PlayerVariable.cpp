@@ -637,8 +637,10 @@ namespace motion {
         const auto key = detail::narrow(label);
         if(const auto it = _runtime->activeMotion->variableRanges.find(key);
            it != _runtime->activeMotion->variableRanges.end()) {
-            return detail::makeArray({ tTJSVariant(it->second.first),
-                                       tTJSVariant(it->second.second) });
+            return detail::makeDictionary({
+                { "min", tTJSVariant(it->second.first) },
+                { "max", tTJSVariant(it->second.second) },
+            });
         }
         return {};
     }

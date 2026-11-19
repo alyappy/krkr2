@@ -277,6 +277,11 @@ namespace motion {
         void setDrawAffineTranslateMatrix(tTJSVariant m);
         tTJSVariant getCameraOffset();
         void setCameraOffset(tTJSVariant offset);
+        void setCameraOffset(double x, double y);
+        static tjs_error setCameraOffsetCompat(tTJSVariant *result,
+                                               tjs_int numparams,
+                                               tTJSVariant **param,
+                                               iTJSDispatch2 *objthis);
         void modifyRoot(tTJSVariant data);
         void debugPrint();
 
@@ -363,7 +368,13 @@ namespace motion {
         tjs_int getTimelineTotalFrameCount(ttstr label);
         void playTimeline(ttstr label, tjs_int flags);
         void stopTimeline(ttstr label);
-        void setTimelineBlendRatio(ttstr label, double ratio);
+        void setTimelineBlendRatio(ttstr label, double ratio,
+                                   double transition = 0.0, double ease = 0.0,
+                                   bool stopWhenBlendDone = false);
+        static tjs_error setTimelineBlendRatioCompat(tTJSVariant *result,
+                                                     tjs_int numparams,
+                                                     tTJSVariant **param,
+                                                     iTJSDispatch2 *objthis);
         double getTimelineBlendRatio(ttstr label);
         void fadeInTimeline(ttstr label, double duration, tjs_int flags);
         void fadeOutTimeline(ttstr label, double duration, tjs_int flags);

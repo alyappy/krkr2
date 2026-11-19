@@ -83,6 +83,37 @@ namespace motion {
         layer->SetImageSize(static_cast<tjs_uint>(_width),
                             static_cast<tjs_uint>(_height));
 
+        // Fast GPU-to-GPU blit when both _targetTexture and destination Layer
+        // belong to the same non-software RenderManager, avoiding per-frame
+        // full-resolution glReadPixels + CPU memcpy + texture re-upload.
+        auto *mgr = TVPGetRenderManager();
+        if(_targetTexture && mgr && !mgr->IsSoftware()) {
+            if(auto *mainImg = layer->GetMainImage();
+               mainImg && mainImg->GetRenderManager() == mgr) {
+                if(auto *copyMethod = mgr->GetRenderMethod("Copy")) {
+                    const int copyW = std::min<int>(
+                        _width, static_cast<int>(_targetTexture->GetWidth()));
+                    const int copyH = std::min<int>(
+                        _height, static_cast<int>(_targetTexture->GetHeight()));
+                    if(copyW > 0 && copyH > 0) {
+                        const tTVPRect rc(0, 0, copyW, copyH);
+                        iTVPTexture2D *reftex = mainImg->GetTexture();
+                        iTVPTexture2D *dsttex = mainImg->GetTextureForRender(
+                            copyMethod->IsBlendTarget(), &rc);
+                        tRenderTexRectArray::Element srcElem[] = {
+                            tRenderTexRectArray::Element(_targetTexture, rc)
+                        };
+                        mgr->OperateRect(copyMethod, dsttex, reftex, rc,
+                                         tRenderTexRectArray(srcElem));
+                        layer->Update(false);
+                        if(result)
+                            *result = *param[0];
+                        return TJS_S_OK;
+                    }
+                }
+            }
+        }
+
         auto *dst = reinterpret_cast<std::uint8_t *>(
             layer->GetMainImagePixelBufferForWrite());
         auto dstPitch = layer->GetMainImagePixelBufferPitch();

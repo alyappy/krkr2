@@ -266,7 +266,8 @@ namespace motion {
                 }
 
                 const auto snapshot = detail::loadMotionSnapshot(
-                    resolved, ResourceManager::getEmotePSBDecryptSeed());
+                    resolved, ResourceManager::getEmotePSBDecryptSeed(),
+                    ResourceManager::getEmotePSBDecryptFunc());
                 if(snapshot) {
                     return cacheMotion(runtime, requestKey, resolvedKey,
                                        snapshot);

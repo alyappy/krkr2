@@ -28,6 +28,42 @@
 
 iTVPRenderManager *TVPGetSoftwareRenderManager();
 
+namespace {
+    struct tTVPScopedCompatibleTexture {
+        iTVPTexture2D *Texture = nullptr;
+        bool Owned = false;
+
+        tTVPScopedCompatibleTexture(iTVPRenderManager *dstMgr,
+                                    const iTVPBaseBitmap *ref) {
+            if(!ref) {
+                return;
+            }
+            iTVPTexture2D *srcTex = ref->GetTexture();
+            if(!srcTex) {
+                return;
+            }
+            iTVPRenderManager *srcMgr = ref->GetRenderManager();
+            if(!dstMgr || !srcMgr || dstMgr == srcMgr) {
+                Texture = srcTex;
+                return;
+            }
+            Texture = TVPAcquireCompatibleTexture(dstMgr, srcMgr, srcTex);
+            Owned = (Texture != nullptr);
+        }
+
+        ~tTVPScopedCompatibleTexture() {
+            if(Owned && Texture) {
+                Texture->Release();
+            }
+        }
+
+        tTVPScopedCompatibleTexture(const tTVPScopedCompatibleTexture &) =
+            delete;
+        tTVPScopedCompatibleTexture &
+        operator=(const tTVPScopedCompatibleTexture &) = delete;
+    };
+} // namespace
+
 //---------------------------------------------------------------------------
 // To forcing bilinear interpolation, define TVP_FORCE_BILINEAR.
 
@@ -814,7 +850,7 @@ bool tTVPBaseBitmap::CopyRect(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref,
        plane == (TVP_BB_COPY_MASK | TVP_BB_COPY_MAIN) &&
        (bool)!Is32BPP() == (bool)!ref->Is32BPP()) {
         // entire area of both bitmaps
-        AssignTexture(ref->GetTexture());
+        AssignBitmap(*ref);
         return true;
     }
 
@@ -930,12 +966,16 @@ bool tTVPBaseBitmap::CopyRect(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref,
             method = _method;
         } break;
     }
+    iTVPRenderManager *mgr = GetRenderManager();
+    tTVPScopedCompatibleTexture compatSrc(mgr, ref);
+    if(!compatSrc.Texture)
+        return false;
     tRenderTexRectArray::Element src_tex[] = { tRenderTexRectArray::Element(
-        ref->GetTexture(), refrect) };
+        compatSrc.Texture, refrect) };
     iTVPTexture2D *reftex = GetTexture();
-    GetRenderManager()->OperateRect(
-        method, GetTextureForRender(method->IsBlendTarget(), &rect), reftex,
-        rect, tRenderTexRectArray(src_tex));
+    mgr->OperateRect(method,
+                     GetTextureForRender(method->IsBlendTarget(), &rect),
+                     reftex, rect, tRenderTexRectArray(src_tex));
 
     return true;
 }
@@ -958,7 +998,7 @@ bool iTVPBaseBitmap::CopyRect(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref,
        plane == (TVP_BB_COPY_MASK | TVP_BB_COPY_MAIN) &&
        (bool)!Is32BPP() == (bool)!ref->Is32BPP()) {
         // entire area of both bitmaps
-        AssignTexture(ref->GetTexture());
+        AssignBitmap(*ref);
         return true;
     }
 
@@ -1037,12 +1077,16 @@ bool iTVPBaseBitmap::CopyRect(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref,
             method = _method;
         } break;
     }
+    iTVPRenderManager *mgr = GetRenderManager();
+    tTVPScopedCompatibleTexture compatSrc(mgr, ref);
+    if(!compatSrc.Texture)
+        return false;
     tRenderTexRectArray::Element src_tex[] = { tRenderTexRectArray::Element(
-        ref->GetTexture(), refrect) };
+        compatSrc.Texture, refrect) };
     iTVPTexture2D *reftex = GetTexture();
-    TVPGetRenderManager()->OperateRect(
-        method, GetTextureForRender(method->IsBlendTarget(), &rect), reftex,
-        rect, tRenderTexRectArray(src_tex));
+    mgr->OperateRect(method,
+                     GetTextureForRender(method->IsBlendTarget(), &rect),
+                     reftex, rect, tRenderTexRectArray(src_tex));
     return true;
 }
 #if 0
@@ -1162,16 +1206,19 @@ bool iTVPBaseBitmap::Copy9Patch(const iTVPBaseBitmap *ref, tTVPRect &margin) {
     if(dw < (w - 2) || dh < (h - 2))
         return false;
 
-    if(!TVPGetRenderManager()->IsSoftware()) {
-        static iTVPRenderMethod *method =
-            TVPGetRenderManager()->GetRenderMethod("Copy");
+    if(!GetRenderManager()->IsSoftware()) {
+        iTVPRenderManager *mgr = GetRenderManager();
+        static iTVPRenderMethod *method = mgr->GetRenderMethod("Copy");
+        tTVPScopedCompatibleTexture compatSrc(mgr, ref);
+        if(!compatSrc.Texture)
+            return false;
         iTVPTexture2D *reftex = GetTexture();
         tTVPRect rcdest(0, 0, dw, dh);
         iTVPTexture2D *dsttex =
             GetTextureForRender(method->IsBlendTarget(), &rcdest);
         tRenderTexRectArray::Element src_tex;
         tRenderTexRectArray srctex(&src_tex, 1);
-        src_tex.first = ref->GetTexture();
+        src_tex.first = compatSrc.Texture;
         if(margin.top > 0) {
             src_tex.second.top = 0;
             src_tex.second.bottom = margin.top;
@@ -1477,12 +1524,15 @@ bool iTVPBaseBitmap::Blt(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref,
     if(refrect.top >= refrect.bottom)
         return false; // not drawable
 
-    tRenderTexRectArray::Element src_tex[] = { tRenderTexRectArray::Element(
-        ref->GetTexture(), refrect) };
     iTVPRenderManager *mgr = GetRenderManager();
     iTVPRenderMethod *rmethod = mgr->GetRenderMethod(opa, hda, method);
     if(!rmethod)
         return false;
+    tTVPScopedCompatibleTexture compatSrc(mgr, ref);
+    if(!compatSrc.Texture)
+        return false;
+    tRenderTexRectArray::Element src_tex[] = { tRenderTexRectArray::Element(
+        compatSrc.Texture, refrect) };
     iTVPTexture2D *reftex = GetTexture();
     mgr->OperateRect(rmethod,
                      GetTextureForRender(rmethod->IsBlendTarget(), &rect),
@@ -2347,12 +2397,15 @@ bool iTVPBaseBitmap::StretchBlt(tTVPRect cliprect, tTVPRect destrect,
         TVPGetRenderManager()->EnumParameterID("StretchType");
     TVPGetRenderManager()->SetParameterInt(StretchTypeId, (int)type);
 
-    tRenderTexRectArray::Element src_tex[] = { tRenderTexRectArray::Element(
-        ref->GetTexture(), refrect) };
     iTVPRenderManager *mgr = GetRenderManager();
     iTVPRenderMethod *rmethod = mgr->GetRenderMethod(opa, hda, method);
     if(!rmethod)
         return false;
+    tTVPScopedCompatibleTexture compatSrc(mgr, ref);
+    if(!compatSrc.Texture)
+        return false;
+    tRenderTexRectArray::Element src_tex[] = { tRenderTexRectArray::Element(
+        compatSrc.Texture, refrect) };
     iTVPTexture2D *reftex = GetTexture();
     mgr->OperateRect(rmethod,
                      GetTextureForRender(rmethod->IsBlendTarget(), &destrect),
@@ -4020,8 +4073,11 @@ bool iTVPBaseBitmap::AffineBlt(tTVPRect destrect, const iTVPBaseBitmap *ref,
     iTVPRenderMethod *_method = mgr->GetRenderMethod(opa, hda, method);
     if(!_method)
         return false;
+    tTVPScopedCompatibleTexture compatSrc(mgr, ref);
+    if(!compatSrc.Texture)
+        return false;
     tRenderTexQuadArray::Element src_tex[] = { tRenderTexQuadArray::Element(
-        ref->GetTexture(), refpt) };
+        compatSrc.Texture, refpt) };
     iTVPTexture2D *reftex = GetTexture();
     mgr->OperateTriangles(
         _method, 2, GetTextureForRender(_method->IsBlendTarget(), &destrect),
@@ -4783,11 +4839,14 @@ tTVPBaseBitmap::tTVPBaseBitmap(tjs_uint w, tjs_uint h, tjs_uint bpp /*= 32*/) {
         bpp == 8 ? TVPTextureFormat::Gray : TVPTextureFormat::RGBA);
 }
 
+tTVPBaseBitmap::tTVPBaseBitmap(const iTVPBaseBitmap &r) :
+    iTVPBaseBitmap(r, TVPGetSoftwareRenderManager()) {}
+
 bool tTVPBaseBitmap::AssignBitmap(tTVPBitmap *bmp) {
     return AssignTexture(TVPGetSoftwareRenderManager()->CreateTexture2D(bmp));
 }
 
-iTVPRenderManager *tTVPBaseBitmap::GetRenderManager() {
+iTVPRenderManager *tTVPBaseBitmap::GetRenderManager() const {
     return TVPGetSoftwareRenderManager();
 }
 
@@ -4803,12 +4862,15 @@ tTVPBaseTexture::tTVPBaseTexture(tjs_uint w, tjs_uint h,
         bpp == 8 ? TVPTextureFormat::Gray : TVPTextureFormat::RGBA);
 }
 
+tTVPBaseTexture::tTVPBaseTexture(const iTVPBaseBitmap &r) :
+    iTVPBaseBitmap(r, TVPGetRenderManager()) {}
+
 bool tTVPBaseTexture::AssignBitmap(tTVPBitmap *bmp) {
     assert(false);
     return false;
 }
 
-iTVPRenderManager *tTVPBaseTexture::GetRenderManager() {
+iTVPRenderManager *tTVPBaseTexture::GetRenderManager() const {
     return TVPGetRenderManager();
 }
 

@@ -277,6 +277,9 @@ TJS_EXP_FUNC_DEF(bool, TVPIsExistentStorage, (const ttstr &name));
 // if "name" is exists, return true. otherwise return false.
 // this searches auto search path.
 
+using tTVPInternalPluginExistsFunc = bool (*)(const ttstr &name);
+void TVPRegisterInternalPluginExistsFunc(tTVPInternalPluginExistsFunc func);
+
 TJS_EXP_FUNC_DEF(void, TVPClearStorageCaches, ());
 
 // clear all internal storage related caches.

@@ -11,9 +11,11 @@
 #define _USE_MATH_DEFINES
 #include "tjsCommHead.h"
 
+#include <cstring>
 #include <memory>
 #include <stdlib.h>
 #include <math.h>
+#include <vector>
 
 #include "LayerBitmapIntf.h"
 #include "LayerBitmapImpl.h"
@@ -478,13 +480,92 @@ tTVPNativeBaseBitmap::tTVPNativeBaseBitmap(
     // Bitmap = new tTVPBitmap(w, h, bpp);
 }
 //---------------------------------------------------------------------------
-tTVPNativeBaseBitmap::tTVPNativeBaseBitmap(const tTVPNativeBaseBitmap &r) {
+iTVPTexture2D *TVPAcquireCompatibleTexture(iTVPRenderManager *dstMgr,
+                                           iTVPRenderManager *srcMgr,
+                                           iTVPTexture2D *srcTex,
+                                           iTVPTexture2D *reusableDstTex) {
+    if(!srcTex) {
+        return nullptr;
+    }
+    if(!dstMgr || !srcMgr || dstMgr == srcMgr) {
+        srcTex->AddRef();
+        return srcTex;
+    }
+    const tjs_uint w = srcTex->GetWidth();
+    const tjs_uint h = srcTex->GetHeight();
+    const TVPTextureFormat::e fmt = srcTex->GetFormat();
+    if(w == 0 || h == 0) {
+        return dstMgr->CreateTexture2D(nullptr, 0, w ? w : 1, h ? h : 1, fmt,
+                                       RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
+    }
+    tjs_uint pixelSize = 0;
+    switch(fmt) {
+        case TVPTextureFormat::Gray:
+            pixelSize = 1;
+            break;
+        case TVPTextureFormat::RGB:
+            pixelSize = 3;
+            break;
+        case TVPTextureFormat::RGBA:
+            pixelSize = 4;
+            break;
+        default:
+            return dstMgr->CreateTexture2D(
+                nullptr, 0, w, h, TVPTextureFormat::RGBA,
+                RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
+    }
+    const void *row0 = srcTex->GetScanLineForRead(0);
+    if(!row0) {
+        return dstMgr->CreateTexture2D(nullptr, 0, w, h, fmt,
+                                       RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
+    }
+    const tjs_int srcPitch = srcTex->GetPitch();
+    const tjs_uint rowBytes = w * pixelSize;
+    const bool contiguous = srcPitch >= static_cast<tjs_int>(rowBytes) &&
+        (h == 1 ||
+         static_cast<const tjs_uint8 *>(srcTex->GetScanLineForRead(1)) ==
+             static_cast<const tjs_uint8 *>(row0) + srcPitch);
+    const auto canReuse = reusableDstTex && !reusableDstTex->IsStatic() &&
+        reusableDstTex->IsIndependent() && reusableDstTex->GetWidth() == w &&
+        reusableDstTex->GetHeight() == h && reusableDstTex->GetFormat() == fmt;
+    if(contiguous) {
+        if(canReuse) {
+            reusableDstTex->Update(row0, fmt, srcPitch, tTVPRect(0, 0, w, h));
+            reusableDstTex->AddRef();
+            return reusableDstTex;
+        }
+        return dstMgr->CreateTexture2D(row0, srcPitch, w, h, fmt,
+                                       RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
+    }
+    std::vector<tjs_uint8> packed(static_cast<size_t>(rowBytes) * h, 0);
+    for(tjs_uint y = 0; y < h; ++y) {
+        const void *srcRow = srcTex->GetScanLineForRead(y);
+        if(srcRow) {
+            std::memcpy(&packed[static_cast<size_t>(y) * rowBytes], srcRow,
+                        rowBytes);
+        }
+    }
+    if(canReuse) {
+        reusableDstTex->Update(packed.data(), fmt, static_cast<int>(rowBytes),
+                               tTVPRect(0, 0, w, h));
+        reusableDstTex->AddRef();
+        return reusableDstTex;
+    }
+    return dstMgr->CreateTexture2D(packed.data(), static_cast<int>(rowBytes), w,
+                                   h, fmt,
+                                   RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
+}
+//---------------------------------------------------------------------------
+tTVPNativeBaseBitmap::tTVPNativeBaseBitmap(const tTVPNativeBaseBitmap &r) :
+    tTVPNativeBaseBitmap(r, nullptr) {}
+//---------------------------------------------------------------------------
+tTVPNativeBaseBitmap::tTVPNativeBaseBitmap(const tTVPNativeBaseBitmap &r,
+                                           iTVPRenderManager *targetMgr) {
     TVPInializeFontRasterizers();
     // TVPFontRasterizer->AddRef(); TODO
 
-    Bitmap = r.Bitmap;
-    if(Bitmap)
-        Bitmap->AddRef();
+    Bitmap = TVPAcquireCompatibleTexture(targetMgr, r.GetRenderManager(),
+                                         r.GetTexture());
 
     Font = r.Font;
     PrerenderedFont = nullptr;
@@ -594,15 +675,10 @@ bool tTVPNativeBaseBitmap::IsOpaque() const { return Bitmap->IsOpaque(); }
 
 //---------------------------------------------------------------------------
 bool tTVPNativeBaseBitmap::Assign(const tTVPNativeBaseBitmap &rhs) {
-    if(this == &rhs || Bitmap == rhs.Bitmap)
+    if(!AssignBitmap(rhs))
         return false;
 
-    Bitmap->Release();
-    Bitmap = rhs.Bitmap;
-    Bitmap->AddRef();
-
     Font = rhs.Font;
-    FontChanged = true; // informs internal font information is invalidated
 
     return true; // changed
 }
@@ -612,9 +688,11 @@ bool tTVPNativeBaseBitmap::AssignBitmap(const tTVPNativeBaseBitmap &rhs) {
     if(this == &rhs || Bitmap == rhs.Bitmap)
         return false;
 
-    Bitmap->Release();
-    Bitmap = rhs.Bitmap;
-    Bitmap->AddRef();
+    iTVPTexture2D *next = TVPAcquireCompatibleTexture(
+        GetRenderManager(), rhs.GetRenderManager(), rhs.GetTexture(), Bitmap);
+    if(Bitmap)
+        Bitmap->Release();
+    Bitmap = next;
 
     // font information are not copyed
     FontChanged = true; // informs internal font information is invalidated

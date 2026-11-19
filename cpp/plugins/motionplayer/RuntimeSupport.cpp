@@ -1263,10 +1263,14 @@ namespace motion::detail {
             appendUnique(snapshot.resourceAliases, raw);
         }
 
-        std::shared_ptr<PSB::PSBFile> loadPSBFile(const ttstr &path,
-                                                  const tjs_int decryptSeed) {
+        std::shared_ptr<PSB::PSBFile>
+        loadPSBFile(const ttstr &path, const tjs_int decryptSeed,
+                    const tTJSVariantClosure decryptFunc) {
             auto file = std::make_shared<PSB::PSBFile>();
             file->setSeed(decryptSeed);
+            if(decryptFunc.Object != nullptr) {
+                file->setDecryptCallback(decryptFunc);
+            }
             if(!file->loadPSBFile(path)) {
                 G_PluginLog.error("motion load file: {} failed",
                                   path.AsStdString());
@@ -1398,8 +1402,9 @@ namespace motion::detail {
     }
 
     std::shared_ptr<MotionSnapshot>
-    loadMotionSnapshot(const ttstr &path, const tjs_int decryptSeed) {
-        const auto file = loadPSBFile(path, decryptSeed);
+    loadMotionSnapshot(const ttstr &path, const tjs_int decryptSeed,
+                       const tTJSVariantClosure decryptFunc) {
+        const auto file = loadPSBFile(path, decryptSeed, decryptFunc);
         if(!file) {
             return nullptr;
         }
@@ -1534,12 +1539,14 @@ namespace motion::detail {
         return snapshot;
     }
 
-    tTJSVariant loadPSBVariant(const ttstr &path, const tjs_int decryptSeed) {
-        if(const auto snapshot = loadMotionSnapshot(path, decryptSeed)) {
+    tTJSVariant loadPSBVariant(const ttstr &path, const tjs_int decryptSeed,
+                               const tTJSVariantClosure decryptFunc) {
+        if(const auto snapshot =
+               loadMotionSnapshot(path, decryptSeed, decryptFunc)) {
             return snapshot->moduleValue;
         }
 
-        const auto file = loadPSBFile(path, decryptSeed);
+        const auto file = loadPSBFile(path, decryptSeed, decryptFunc);
         if(!file || !file->getObjects()) {
             return {};
         }

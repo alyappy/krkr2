@@ -294,7 +294,7 @@ namespace TJS {
                     return new tTJSVariant(value);
                 } else if(type >= TYPE_NEGATIVE_FIX_NUM_MIN &&
                           type <= TYPE_NEGATIVE_FIX_NUM_MAX) {
-                    tjs_int value = type;
+                    tjs_int value = static_cast<tjs_int8>(type);
                     return new tTJSVariant(value);
                 } else if(type >= TYPE_FIX_RAW_MIN &&
                           type <= TYPE_FIX_RAW_MAX) { // octet
@@ -351,10 +351,13 @@ namespace TJS {
 
         tTJSDictionaryObject *dic = CreateDictionary(count);
         for(tjs_uint i = 0; i < count; i++) {
+            if(index >= size)
+                TJS_eTJSError(TJSReadError);
             tjs_uint8 type = buff[index];
             index++;
             // 最初に文字を読む
             tTJSVariantString *name = nullptr;
+            bool allowEmptyKey = false;
             switch(type) {
                 case TYPE_STRING8: {
                     if((index + sizeof(tjs_uint8)) > size)
@@ -364,6 +367,7 @@ namespace TJS {
                     if((index + (len * sizeof(tjs_char))) > size)
                         TJS_eTJSError(TJSReadError);
                     name = ReadString(buff, len, index);
+                    allowEmptyKey = true;
                     break;
                 }
                 case TYPE_STRING16: {
@@ -373,6 +377,7 @@ namespace TJS {
                     if((index + (len * sizeof(tjs_char))) > size)
                         TJS_eTJSError(TJSReadError);
                     name = ReadString(buff, len, index);
+                    allowEmptyKey = true;
                     break;
                 }
                 case TYPE_STRING32: {
@@ -382,6 +387,7 @@ namespace TJS {
                     if((index + (len * sizeof(tjs_char))) > size)
                         TJS_eTJSError(TJSReadError);
                     name = ReadString(buff, len, index);
+                    allowEmptyKey = true;
                     break;
                 }
                 default:
@@ -391,17 +397,40 @@ namespace TJS {
                         if((len * sizeof(tjs_char) + index) > size)
                             TJS_eTJSError(TJSReadError);
                         name = ReadString(buff, len, index);
-                    } else { // Dictionary形式の場合、最初に文字列がこないといけない
-                        TJS_eTJSError(TJSReadError);
+                        allowEmptyKey = true;
+                    } else {
+                        --index;
+                        tTJSVariant *keyVal = ReadBasicType(buff, size, index);
+                        if(!keyVal) {
+                            TJS_eTJSError(TJSReadError);
+                        }
+                        if(keyVal->Type() == tvtInteger ||
+                           keyVal->Type() == tvtReal ||
+                           keyVal->Type() == tvtString) {
+                            name = keyVal->AsString();
+                            allowEmptyKey = true;
+                            delete keyVal;
+                        } else {
+                            delete keyVal;
+                            TJS_eTJSError(TJSReadError);
+                        }
                     }
                     break;
             }
             // 次に要素を読む
             tTJSVariant *value = ReadBasicType(buff, size, index);
-            AddDictionary(dic, name, value);
-            delete value;
-            if(name)
+            if(name) {
+                AddDictionary(dic, name, value);
                 name->Release();
+                name = nullptr;
+            } else if(allowEmptyKey && value) {
+                // TJS2 Dictionary members cannot hold empty-string keys
+                // (tTJSSymbolData::_SetName rejects ""), so ignore cleanly.
+            } else {
+                delete value;
+                TJS_eTJSError(TJSReadError);
+            }
+            delete value;
         }
         auto *ret = new tTJSVariant(dic, dic);
         dic->Release();

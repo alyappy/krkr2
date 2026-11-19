@@ -56,10 +56,15 @@ namespace motion {
                 it, _runtime->playingTimelineLabels.end());
         }
         _frameLoopTime = syncTime;
-        _clampedEvalTime = syncTime;
+        _clampedEvalTime =
+            detail::isEmoteLikeMotion(*_runtime) ? 0.0 : syncTime;
         _syncWaiting = false;
         _syncActive = false;
         _allplaying = !_runtime->playingTimelineLabels.empty();
+        if(!_runtime->nodes.empty()) {
+            updateLayers();
+            calcBounds();
+        }
     }
 
     bool Player::getTimelinePlaying(ttstr label) {
@@ -291,7 +296,9 @@ namespace motion {
         _allplaying = !_runtime->playingTimelineLabels.empty();
     }
 
-    void Player::setTimelineBlendRatio(ttstr label, double ratio) {
+    void Player::setTimelineBlendRatio(ttstr label, double ratio,
+                                       double transition, double ease,
+                                       bool stopWhenBlendDone) {
         ensureMotionLoaded();
         if(_runtime->timelines.empty() && _runtime->activeMotion) {
             detail::primeTimelineStates(_runtime->timelines,
@@ -301,9 +308,43 @@ namespace motion {
         const auto key = detail::narrow(label);
         auto &state = _runtime->timelines[key];
         state.label = key;
+        if(transition > 0.0 || stopWhenBlendDone) {
+            setTimelineBlendLike_0x6735AC(key, stopWhenBlendDone, ratio,
+                                          transition, ease);
+            return;
+        }
         state.blendRatio = ratio;
         state.blendAnimator = {};
         state.blendAutoStop = false;
+    }
+
+    tjs_error Player::setTimelineBlendRatioCompat(tTJSVariant *,
+                                                  tjs_int numparams,
+                                                  tTJSVariant **param,
+                                                  iTJSDispatch2 *objthis) {
+        auto *self =
+            ncbInstanceAdaptor<Player>::GetNativeInstance(objthis, false);
+        if(!self) {
+            return TJS_E_INVALIDOBJECT;
+        }
+        if(numparams < 2 || !param[0] || !param[1]) {
+            return TJS_E_BADPARAMCOUNT;
+        }
+        const double transition =
+            (numparams >= 3 && param[2] && param[2]->Type() != tvtVoid)
+            ? param[2]->AsReal()
+            : 0.0;
+        const double ease =
+            (numparams >= 4 && param[3] && param[3]->Type() != tvtVoid)
+            ? param[3]->AsReal()
+            : 0.0;
+        const bool stopWhenBlendDone =
+            (numparams >= 5 && param[4] && param[4]->Type() != tvtVoid)
+            ? (param[4]->AsInteger() != 0)
+            : false;
+        self->setTimelineBlendRatio(ttstr(*param[0]), param[1]->AsReal(),
+                                    transition, ease, stopWhenBlendDone);
+        return TJS_S_OK;
     }
 
     double Player::getTimelineBlendRatio(ttstr label) {

@@ -19,6 +19,7 @@ namespace motion {
 
     enum TimelinePlayFlag {
         TimelinePlayFlagParallel = 1,
+        TimelinePlayFlagDifference = 2,
         TimelinePlayFlagSequential = 2
     };
 
@@ -72,6 +73,11 @@ namespace motion {
         void setLoopTime(double v) { _player.setLoopTime(v); }
         [[nodiscard]] double getLoopTime() const {
             return _player.getLoopTime();
+        }
+
+        void setTickCount(double v) { _player.setTickCount(v); }
+        [[nodiscard]] double getTickCount() const {
+            return _player.getTickCount();
         }
 
         void setProcessedMeshVerticesNum(int v) {
@@ -178,7 +184,15 @@ namespace motion {
                                            tTJSVariant **param,
                                            iTJSDispatch2 *objthis);
         double getVariable(ttstr label);
+        tTJSVariant getVariableRange(ttstr label);
         tTJSVariant getVariableFrameList(ttstr label);
+        tTJSVariant getCameraOffset();
+        void setCameraOffset(tTJSVariant offset);
+        void setCameraOffset(double x, double y);
+        static tjs_error setCameraOffsetCompat(tTJSVariant *result,
+                                               tjs_int numparams,
+                                               tTJSVariant **param,
+                                               iTJSDispatch2 *objthis);
 
         void startWind(double minAngle, double maxAngle, double amplitude,
                        double freqX = 0.0, double freqY = 0.0);
@@ -208,7 +222,13 @@ namespace motion {
         bool getTimelinePlaying(ttstr label);
         void stopTimeline(ttstr label);
 
-        void setTimelineBlendRatio(ttstr label, double ratio);
+        void setTimelineBlendRatio(ttstr label, double ratio,
+                                   double transition = 0.0, double ease = 0.0,
+                                   bool stopWhenBlendDone = false);
+        static tjs_error setTimelineBlendRatioCompat(tTJSVariant *result,
+                                                     tjs_int numparams,
+                                                     tTJSVariant **param,
+                                                     iTJSDispatch2 *objthis);
         double getTimelineBlendRatio(ttstr label);
         void fadeInTimeline(ttstr label, double duration, tjs_int flags);
         void fadeOutTimeline(ttstr label, double duration, tjs_int flags);

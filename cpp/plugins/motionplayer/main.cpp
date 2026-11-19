@@ -201,7 +201,7 @@ NCB_REGISTER_CLASS(Player) {
     NCB_METHOD_RAW_CALLBACK(setDrawAffineTranslateMatrix,
                             &Player::setDrawAffineTranslateMatrixCompat, 0);
     NCB_METHOD(getCameraOffset);
-    NCB_METHOD(setCameraOffset);
+    NCB_METHOD_RAW_CALLBACK(setCameraOffset, &Player::setCameraOffsetCompat, 0);
     NCB_METHOD(modifyRoot);
     NCB_METHOD(debugPrint);
 
@@ -272,7 +272,8 @@ NCB_REGISTER_CLASS(Player) {
     NCB_METHOD(getTimelineTotalFrameCount);
     NCB_METHOD(playTimeline);
     NCB_METHOD(stopTimeline);
-    NCB_METHOD(setTimelineBlendRatio);
+    NCB_METHOD_RAW_CALLBACK(setTimelineBlendRatio,
+                            &Player::setTimelineBlendRatioCompat, 0);
     NCB_METHOD(getTimelineBlendRatio);
     NCB_METHOD(fadeInTimeline);
     NCB_METHOD(fadeOutTimeline);
@@ -298,6 +299,13 @@ NCB_REGISTER_CLASS(Player) {
 NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_CONSTRUCTOR((ResourceManager));
 
+    Variant(TJS_W("TimelinePlayFlagParallel"),
+            (tjs_int)TimelinePlayFlagParallel);
+    Variant(TJS_W("TimelinePlayFlagDifference"),
+            (tjs_int)TimelinePlayFlagDifference);
+    Variant(TJS_W("TimelinePlayFlagSequential"),
+            (tjs_int)TimelinePlayFlagSequential);
+
     // Properties
     NCB_PROPERTY_RO(module, getModule);
     NCB_PROPERTY(completionType, getCompletionType, setCompletionType);
@@ -310,6 +318,7 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_PROPERTY(frameLastTime, getFrameLastTime, setFrameLastTime);
     NCB_PROPERTY(frameLoopTime, getFrameLoopTime, setFrameLoopTime);
     NCB_PROPERTY(loopTime, getLoopTime, setLoopTime);
+    NCB_PROPERTY(tickCount, getTickCount, setTickCount);
     NCB_PROPERTY(processedMeshVerticesNum, getProcessedMeshVerticesNum,
                  setProcessedMeshVerticesNum);
     NCB_PROPERTY(visible, getVisible, setVisible);
@@ -355,7 +364,11 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_METHOD(getVariableFrameValueAt);
     NCB_METHOD_RAW_CALLBACK(setVariable, &EmotePlayer::setVariableCompat, 0);
     NCB_METHOD(getVariable);
+    NCB_METHOD(getVariableRange);
     NCB_METHOD(getVariableFrameList);
+    NCB_METHOD(getCameraOffset);
+    NCB_METHOD_RAW_CALLBACK(setCameraOffset,
+                            &EmotePlayer::setCameraOffsetCompat, 0);
     NCB_METHOD_RAW_CALLBACK(startWind, &EmotePlayer::startWindCompat, 0);
     NCB_METHOD_RAW_CALLBACK(stopWind, &EmotePlayer::stopWindCompat, 0);
     NCB_METHOD(countMainTimelines);
@@ -376,7 +389,8 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_METHOD(getTimelinePlaying);
     NCB_METHOD(stopTimeline);
     NCB_METHOD(setTimeline);
-    NCB_METHOD(setTimelineBlendRatio);
+    NCB_METHOD_RAW_CALLBACK(setTimelineBlendRatio,
+                            &EmotePlayer::setTimelineBlendRatioCompat, 0);
     NCB_METHOD(getTimelineBlendRatio);
     NCB_METHOD(fadeInTimeline);
     NCB_METHOD(fadeOutTimeline);
@@ -421,9 +435,20 @@ NCB_REGISTER_SUBCLASS(ResourceManager) {
 // Motion top-level class with constants and subclasses
 // ============================================================
 
-class Motion {};
+class Motion {
+public:
+    static tjs_error getD3DAvailable(tTJSVariant *result, tjs_int,
+                                     tTJSVariant **, iTJSDispatch2 *) {
+        if(result) {
+            *result = tTJSVariant(1);
+        }
+        return TJS_S_OK;
+    }
+};
 
 NCB_REGISTER_CLASS(Motion) {
+    NCB_METHOD_RAW_CALLBACK(getD3DAvailable, &Motion::getD3DAvailable,
+                            TJS_STATICMEMBER);
     // Subclasses (Player registered as top-level class, aliased in
     // PostRegistCallback)
     NCB_SUBCLASS(ResourceManager, ResourceManager);
@@ -474,6 +499,12 @@ NCB_REGISTER_CLASS(Motion) {
 
     Variant("MaskModeStencil", (tjs_int)MaskModeStencil);
     Variant("MaskModeAlpha", (tjs_int)MaskModeAlpha);
+    Variant(TJS_W("TimelinePlayFlagParallel"),
+            (tjs_int)TimelinePlayFlagParallel);
+    Variant(TJS_W("TimelinePlayFlagDifference"),
+            (tjs_int)TimelinePlayFlagDifference);
+    Variant(TJS_W("TimelinePlayFlagSequential"),
+            (tjs_int)TimelinePlayFlagSequential);
 }
 
 // ============================================================
@@ -548,7 +579,9 @@ static void PostRegistCallback() {
 }
 
 static void PreRegistCallback() {}
-static void PostUnregistCallback() {}
+static void PostUnregistCallback() {
+    ResourceManager::clearEmotePSBDecryptFunc();
+}
 
 NCB_PRE_REGIST_CALLBACK(PreRegistCallback);
 NCB_POST_REGIST_CALLBACK(PostRegistCallback);
@@ -566,6 +599,8 @@ NCB_REGISTER_CLASS(D3DEmoteModule) {
 
     Variant(TJS_W("TimelinePlayFlagParallel"),
             (tjs_int)TimelinePlayFlagParallel);
+    Variant(TJS_W("TimelinePlayFlagDifference"),
+            (tjs_int)TimelinePlayFlagDifference);
     Variant(TJS_W("TimelinePlayFlagSequential"),
             (tjs_int)TimelinePlayFlagSequential);
 
@@ -587,6 +622,13 @@ NCB_REGISTER_CLASS(D3DEmoteModule) {
 NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_CONSTRUCTOR((ResourceManager));
 
+    Variant(TJS_W("TimelinePlayFlagParallel"),
+            (tjs_int)TimelinePlayFlagParallel);
+    Variant(TJS_W("TimelinePlayFlagDifference"),
+            (tjs_int)TimelinePlayFlagDifference);
+    Variant(TJS_W("TimelinePlayFlagSequential"),
+            (tjs_int)TimelinePlayFlagSequential);
+
     // Properties (same as EmotePlayer subclass, matching IDA registration
     // order)
     NCB_PROPERTY_RO(module, getModule);
@@ -600,6 +642,7 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_PROPERTY(frameLastTime, getFrameLastTime, setFrameLastTime);
     NCB_PROPERTY(frameLoopTime, getFrameLoopTime, setFrameLoopTime);
     NCB_PROPERTY(loopTime, getLoopTime, setLoopTime);
+    NCB_PROPERTY(tickCount, getTickCount, setTickCount);
     NCB_PROPERTY(processedMeshVerticesNum, getProcessedMeshVerticesNum,
                  setProcessedMeshVerticesNum);
     NCB_PROPERTY(visible, getVisible, setVisible);
@@ -645,11 +688,16 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_METHOD(getVariableFrameValueAt);
     NCB_METHOD_RAW_CALLBACK(setVariable, &EmotePlayer::setVariableCompat, 0);
     NCB_METHOD(getVariable);
+    NCB_METHOD(getVariableRange);
     NCB_METHOD(getVariableFrameList);
+    NCB_METHOD(getCameraOffset);
+    NCB_METHOD_RAW_CALLBACK(setCameraOffset,
+                            &EmotePlayer::setCameraOffsetCompat, 0);
     NCB_METHOD_RAW_CALLBACK(startWind, &EmotePlayer::startWindCompat, 0);
     NCB_METHOD_RAW_CALLBACK(stopWind, &EmotePlayer::stopWindCompat, 0);
     NCB_METHOD(countMainTimelines);
     NCB_METHOD(getMainTimelineLabelAt);
+    NCB_METHOD(getMainTimelineLabelList);
     NCB_METHOD(countDiffTimelines);
     NCB_METHOD(getDiffTimelineLabelAt);
     NCB_METHOD(getDiffTimelineLabelList);
@@ -665,7 +713,8 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_METHOD(getTimelinePlaying);
     NCB_METHOD(stopTimeline);
     NCB_METHOD(setTimeline);
-    NCB_METHOD(setTimelineBlendRatio);
+    NCB_METHOD_RAW_CALLBACK(setTimelineBlendRatio,
+                            &EmotePlayer::setTimelineBlendRatioCompat, 0);
     NCB_METHOD(getTimelineBlendRatio);
     NCB_METHOD(fadeInTimeline);
     NCB_METHOD(fadeOutTimeline);

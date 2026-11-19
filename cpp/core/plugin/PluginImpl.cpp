@@ -146,7 +146,48 @@ bool TVPLoadInternalPlugin(const ttstr &_name) {
     return ncbAutoRegister::LoadModule(TVPExtractStorageName(_name));
 }
 
+bool TVPIsInternalPluginStorage(const ttstr &path) {
+    if(path.IsEmpty())
+        return false;
+    const tjs_char last = path.c_str()[path.GetLen() - 1];
+    if(last == TJS_W('/') || last == TJS_W('\\'))
+        return false;
+
+    const ttstr filename = TVPExtractStorageName(path);
+    if(filename.IsEmpty())
+        return false;
+
+    const ttstr ext = TVPExtractStorageExt(filename).AsLowerCase();
+    const ttstr stem = TVPChopStorageExt(filename);
+    ttstr moduleName;
+    if(ext == TJS_W(".tpm") || ext == TJS_W(".dll")) {
+        moduleName = stem + TJS_W(".dll");
+    } else {
+        return false;
+    }
+
+    if(!ncbAutoRegister::HasModule(moduleName)) {
+        return false;
+    }
+
+    // Some legacy KAG titles without E-Mote/Motion probe emoteplayer.dll or
+    // motionplayer.dll and try to load motion.tjs whenever it is reported
+    // present. Only synthesize virtual existence for those modules when
+    // motion/E-Mote scripts actually exist in storage; explicit Plugins.link()
+    // is unaffected.
+    const ttstr loweredStem = stem.AsLowerCase();
+    if((loweredStem == TJS_W("emoteplayer") ||
+        loweredStem == TJS_W("motionplayer")) &&
+       !TVPIsExistentStorage(TJS_W("motion.tjs")) &&
+       !TVPIsExistentStorage(TJS_W("emoteplayer.ks"))) {
+        return false;
+    }
+
+    return true;
+}
+
 void tvpLoadPlugins() {
+    TVPRegisterInternalPluginExistsFunc(&TVPIsInternalPluginStorage);
     TVPLoadInternalPlugins();
     // This function searches plugins which have an extension of
     // ".tpm" in the default path:
@@ -290,6 +331,7 @@ void TVPDoTryBlock(tTVPTryBlockFunction tryblock,
 // TVPCreateNativeClass_Plugins
 //---------------------------------------------------------------------------
 tTJSNativeClass *TVPCreateNativeClass_Plugins() {
+    TVPRegisterInternalPluginExistsFunc(&TVPIsInternalPluginStorage);
     auto *cls = new tTJSNC_Plugins();
 
     // setup some platform-specific members

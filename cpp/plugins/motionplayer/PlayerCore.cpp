@@ -1691,22 +1691,68 @@ namespace motion {
         // NCB_METHOD_RAW
     }
 
-    tTJSVariant Player::getCameraOffset() { return _cameraPosition; }
+    tTJSVariant Player::getCameraOffset() {
+        if(_cameraPosition.Type() != tvtVoid) {
+            return _cameraPosition;
+        }
+        return detail::makeDictionary({
+            { "x", tTJSVariant(static_cast<double>(_cameraOffsetX)) },
+            { "y", tTJSVariant(static_cast<double>(_cameraOffsetY)) },
+        });
+    }
+
+    void Player::setCameraOffset(double x, double y) {
+        _cameraOffsetX = static_cast<float>(x);
+        _cameraOffsetY = static_cast<float>(y);
+        _cameraPosition = detail::makeDictionary({
+            { "x", tTJSVariant(x) },
+            { "y", tTJSVariant(y) },
+        });
+    }
 
     void Player::setCameraOffset(tTJSVariant offset) {
         _cameraPosition = offset;
         // Aligned to libkrkr2.so sub_6D9A38: setCameraOffset(x, y)
-        // Stores as float at Player+144/148. NCB passes a Point with x,y.
+        // Stores as float at Player+144/148. Accepts Point/dict {x,y} or [x,y].
         if(offset.Type() == tvtObject) {
             auto *obj = offset.AsObjectNoAddRef();
             if(obj) {
                 tTJSVariant xv, yv;
-                if(obj->PropGet(0, TJS_W("x"), nullptr, &xv, obj) == TJS_S_OK)
+                if(obj->PropGet(0, TJS_W("x"), nullptr, &xv, obj) == TJS_S_OK &&
+                   xv.Type() != tvtVoid) {
                     _cameraOffsetX = static_cast<float>(xv.AsReal());
-                if(obj->PropGet(0, TJS_W("y"), nullptr, &yv, obj) == TJS_S_OK)
+                } else if(obj->PropGetByNum(0, 0, &xv, obj) == TJS_S_OK &&
+                          xv.Type() != tvtVoid) {
+                    _cameraOffsetX = static_cast<float>(xv.AsReal());
+                }
+                if(obj->PropGet(0, TJS_W("y"), nullptr, &yv, obj) == TJS_S_OK &&
+                   yv.Type() != tvtVoid) {
                     _cameraOffsetY = static_cast<float>(yv.AsReal());
+                } else if(obj->PropGetByNum(0, 1, &yv, obj) == TJS_S_OK &&
+                          yv.Type() != tvtVoid) {
+                    _cameraOffsetY = static_cast<float>(yv.AsReal());
+                }
             }
         }
+    }
+
+    tjs_error Player::setCameraOffsetCompat(tTJSVariant *, tjs_int numparams,
+                                            tTJSVariant **param,
+                                            iTJSDispatch2 *objthis) {
+        auto *self =
+            ncbInstanceAdaptor<Player>::GetNativeInstance(objthis, false);
+        if(!self) {
+            return TJS_E_INVALIDOBJECT;
+        }
+        if(numparams >= 2 && param[0] && param[1]) {
+            self->setCameraOffset(param[0]->AsReal(), param[1]->AsReal());
+            return TJS_S_OK;
+        }
+        if(numparams >= 1 && param[0]) {
+            self->setCameraOffset(*param[0]);
+            return TJS_S_OK;
+        }
+        return TJS_E_BADPARAMCOUNT;
     }
 
     void Player::modifyRoot(tTJSVariant data) { _project = data; }

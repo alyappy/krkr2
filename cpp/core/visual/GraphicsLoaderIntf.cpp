@@ -1385,6 +1385,27 @@ public:
     }
 
     void AssignToTexture(iTVPBaseBitmap *dst) {
+        iTVPRenderManager *dstMgr = dst->GetRenderManager();
+        iTVPRenderManager *globalMgr = TVPGetRenderManager();
+        if(dstMgr != globalMgr) {
+            if(Bitmap) {
+                iTVPTexture2D *compatTex = dstMgr->CreateTexture2D(Bitmap);
+                if(compatTex) {
+                    dst->AssignTexture(compatTex);
+                    compatTex->Release();
+                    return;
+                }
+            }
+            if(Texture) {
+                iTVPTexture2D *compatTex = TVPAcquireCompatibleTexture(
+                    dstMgr, globalMgr, Texture, dst->GetTexture());
+                if(compatTex) {
+                    dst->AssignTexture(compatTex);
+                    compatTex->Release();
+                    return;
+                }
+            }
+        }
         if(!Texture && Bitmap) {
             int bmpw = Bitmap->GetWidth(), bmph = Bitmap->GetHeight();
             TVPTextureFormat::e format;
@@ -1401,7 +1422,7 @@ public:
                 default:
                     return;
             }
-            Texture = TVPGetRenderManager()->CreateTexture2D(Bitmap);
+            Texture = globalMgr->CreateTexture2D(Bitmap);
             if(Bitmap)
                 Bitmap->Release(), Bitmap = nullptr;
             if(RawData)

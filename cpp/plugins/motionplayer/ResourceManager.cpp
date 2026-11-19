@@ -107,6 +107,17 @@ tjs_int motion::ResourceManager::getEmotePSBDecryptSeed() {
     return _decryptSeed;
 }
 
+tTJSVariantClosure motion::ResourceManager::getEmotePSBDecryptFunc() {
+    if(_decryptFunc.Type() == tvtObject) {
+        return _decryptFunc.AsObjectClosureNoAddRef();
+    }
+    return tTJSVariantClosure(nullptr, nullptr);
+}
+
+void motion::ResourceManager::clearEmotePSBDecryptFunc() {
+    _decryptFunc.Clear();
+}
+
 tjs_error motion::ResourceManager::setEmotePSBDecryptSeed(tTJSVariant *,
                                                           tjs_int count,
                                                           tTJSVariant **p,
@@ -132,9 +143,18 @@ tjs_error motion::ResourceManager::setEmotePSBDecryptFunc(tTJSVariant *,
     if(!p[0]) {
         return TJS_E_INVALIDPARAM;
     }
-    _decryptFunc = p[0]->AsObjectClosure();
+    if(p[0]->Type() == tvtObject && p[0]->AsObjectNoAddRef() != nullptr) {
+        _decryptFunc = *p[0];
+    } else if(p[0]->Type() == tvtVoid ||
+              (p[0]->Type() == tvtObject &&
+               p[0]->AsObjectNoAddRef() == nullptr)) {
+        _decryptFunc.Clear();
+    } else {
+        return TJS_E_INVALIDPARAM;
+    }
     G_PluginLog.info("setEmotePSBDecryptFunc: {}",
-                     _decryptFunc.Object ? "closure stored" : "cleared");
+                     _decryptFunc.Type() == tvtObject ? "closure stored"
+                                                      : "cleared");
     return TJS_S_OK;
 }
 
@@ -147,7 +167,8 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
         G_PluginLog.debug("ResourceManager::load emote/psb: {}", rawPath);
     }
 
-    const auto loaded = detail::loadPSBVariant(path, _decryptSeed);
+    const auto loaded =
+        detail::loadPSBVariant(path, _decryptSeed, getEmotePSBDecryptFunc());
     if(loaded.Type() != tvtObject || !_state) {
         if(loaded.Type() == tvtVoid) {
             G_PluginLog.warn("ResourceManager::load({}) failed", rawPath);

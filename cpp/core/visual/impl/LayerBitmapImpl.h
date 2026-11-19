@@ -110,6 +110,8 @@ class tTVPNativeBaseBitmap {
 public:
     tTVPNativeBaseBitmap(/*tjs_uint w, tjs_uint h, tjs_uint bpp*/);
     tTVPNativeBaseBitmap(const tTVPNativeBaseBitmap &r);
+    tTVPNativeBaseBitmap(const tTVPNativeBaseBitmap &r,
+                         class iTVPRenderManager *targetMgr);
     virtual ~tTVPNativeBaseBitmap();
 
     /* metrics */
@@ -256,8 +258,12 @@ protected:
 
 public:
     void operator=(const tTVPNativeBaseBitmap &rhs) { Assign(rhs); }
-    virtual class iTVPRenderManager *GetRenderManager() = 0;
+    virtual class iTVPRenderManager *GetRenderManager() const = 0;
 };
+//---------------------------------------------------------------------------
+class iTVPTexture2D *TVPAcquireCompatibleTexture(
+    class iTVPRenderManager *dstMgr, class iTVPRenderManager *srcMgr,
+    class iTVPTexture2D *srcTex, class iTVPTexture2D *reusableDstTex = nullptr);
 //---------------------------------------------------------------------------
 
 #endif

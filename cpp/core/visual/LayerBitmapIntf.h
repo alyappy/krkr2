@@ -140,6 +140,11 @@ extern tjs_int TVPGetProcessorNum();
 class tTVPNativeBaseBitmap;
 class iTVPBaseBitmap : public tTVPNativeBaseBitmap {
 public:
+    iTVPBaseBitmap() = default;
+    iTVPBaseBitmap(const iTVPBaseBitmap &r) = default;
+    iTVPBaseBitmap(const iTVPBaseBitmap &r,
+                   class iTVPRenderManager *targetMgr) :
+        tTVPNativeBaseBitmap(r, targetMgr) {}
     // void operator =(const iTVPBaseBitmap & rhs) { Assign(rhs); }
 
     // metrics
@@ -245,10 +250,11 @@ class iTVPRenderManager;
 class tTVPBaseBitmap : public iTVPBaseBitmap // for ProvinceImage
 {
 public:
+    using tTVPNativeBaseBitmap::AssignBitmap;
     tTVPBaseBitmap(tjs_uint w, tjs_uint h, tjs_uint bpp = 32);
-    tTVPBaseBitmap(const iTVPBaseBitmap &r) : iTVPBaseBitmap(r) {}
+    tTVPBaseBitmap(const iTVPBaseBitmap &r);
     virtual bool AssignBitmap(tTVPBitmap *bmp);
-    iTVPRenderManager *GetRenderManager() override;
+    iTVPRenderManager *GetRenderManager() const override;
     bool Fill(tTVPRect rect, tjs_uint32 value) override;
 
     bool CopyRect(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref,
@@ -265,10 +271,11 @@ public:
 //---------------------------------------------------------------------------
 class tTVPBaseTexture : public iTVPBaseBitmap {
 public:
+    using tTVPNativeBaseBitmap::AssignBitmap;
     tTVPBaseTexture(tjs_uint w, tjs_uint h, tjs_uint bpp = 32);
-    tTVPBaseTexture(const iTVPBaseBitmap &r) : iTVPBaseBitmap(r) {}
+    tTVPBaseTexture(const iTVPBaseBitmap &r);
     virtual bool AssignBitmap(tTVPBitmap *bmp);
-    iTVPRenderManager *GetRenderManager() override;
+    iTVPRenderManager *GetRenderManager() const override;
     void Update(const void *pixel, unsigned int pitch, int x, int y, int w,
                 int h);
 };

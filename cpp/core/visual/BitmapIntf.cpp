@@ -38,7 +38,7 @@ tjs_error tTJSNI_Bitmap::Construct(tjs_int numparams, tTJSVariant **param,
             Bitmap = new tTVPBaseBitmap(width, height, bpp);
         }
     } else {
-        Bitmap = new tTVPBaseBitmap(TVPGetInitialBitmap());
+        Bitmap = new tTVPBaseBitmap(32, 32);
     }
     return TJS_S_OK;
 }
@@ -99,7 +99,7 @@ iTJSDispatch2 *tTJSNI_Bitmap::Load(const ttstr &name, tjs_uint32 colorkey) {
     if(Loading)
         TVPThrowExceptionMessage(TVPCurrentlyAsyncLoadBitmap);
     if(!Bitmap)
-        Bitmap = new tTVPBaseBitmap(TVPGetInitialBitmap());
+        Bitmap = new tTVPBaseBitmap(32, 32);
 
     iTJSDispatch2 *metainfo = nullptr;
     TVPLoadGraphic(Bitmap, name, colorkey, 0, 0, glmNormal, nullptr, &metainfo);

@@ -36,6 +36,8 @@ namespace motion {
         tjs_int requireLayerIdForName(ttstr name);
         void releaseLayerId(tjs_int id);
         [[nodiscard]] static tjs_int getEmotePSBDecryptSeed();
+        [[nodiscard]] static tTJSVariantClosure getEmotePSBDecryptFunc();
+        static void clearEmotePSBDecryptFunc();
 
         static tjs_error setEmotePSBDecryptSeed(tTJSVariant *r, tjs_int count,
                                                 tTJSVariant **p,
@@ -59,6 +61,6 @@ namespace motion {
 
         std::shared_ptr<State> _state;
         inline static int _decryptSeed = 0;
-        inline static tTJSVariantClosure _decryptFunc{};
+        inline static tTJSVariant _decryptFunc{};
     };
 } // namespace motion

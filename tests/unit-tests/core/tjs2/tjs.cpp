@@ -10,8 +10,10 @@
 #include "Platform.h"
 #include "test_config.h"
 #include "TextStream.h"
+#include "tjsBinarySerializer.h"
 #include "tjsScriptBlock.h"
 #include "TVPLog.h"
+#include "UtilStreams.h"
 
 class TJSConsoleOutputDef final : public iTJSConsoleOutput {
 public:
@@ -71,4 +73,45 @@ TEST_CASE("exec tjs2 script") {
     // }
 
     tvPScriptEngine->Release();
+}
+
+TEST_CASE(
+    "tTJSBinarySerializer decodes negative fixnums and empty/scalar dict keys",
+    "[core][tjs2]") {
+    const auto engine = new tTJS();
+    engine->SetConsoleOutput(&iTJSConsoleOutputDef);
+
+    // Dictionary with 3 entries:
+    //   1) key "n" (fixstr len 1) -> negative fixnum -1 (0xFF)
+    //   2) key ""  (fixstr len 0) -> positive fixnum 7 (ignored cleanly)
+    //   3) key 42  (pos fixnum 42) -> negative fixnum -32 (0xE0)
+    const tjs_uint8 payload[] = {
+        0x83, // TYPE_FIX_DICTIONARY_MIN + 3
+        0xA1, 'n', 0x00, // fixstr "n" (UTF-16LE)
+        0xFF, // negative fixnum -1
+        0xA0, // empty fixstr ""
+        0x07, // positive fixnum 7
+        0x2A, // positive fixnum 42 as scalar key
+        0xE0, // negative fixnum -32
+    };
+    tTVPMemoryStream stream(payload, sizeof(payload));
+    tTJSBinarySerializer serializer;
+    tTJSVariant *root = serializer.Read(&stream);
+    REQUIRE(root != nullptr);
+    REQUIRE(root->Type() == tvtObject);
+    iTJSDispatch2 *dict = root->AsObjectNoAddRef();
+    REQUIRE(dict != nullptr);
+
+    tTJSVariant vNeg1;
+    REQUIRE(TJS_SUCCEEDED(
+        dict->PropGet(TJS_MEMBERMUSTEXIST, TJS_W("n"), nullptr, &vNeg1, dict)));
+    REQUIRE(vNeg1.AsInteger() == -1);
+
+    tTJSVariant vNeg32;
+    REQUIRE(TJS_SUCCEEDED(dict->PropGet(TJS_MEMBERMUSTEXIST, TJS_W("42"),
+                                        nullptr, &vNeg32, dict)));
+    REQUIRE(vNeg32.AsInteger() == -32);
+
+    delete root;
+    engine->Release();
 }

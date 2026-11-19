@@ -599,7 +599,7 @@ namespace motion {
             pixels, pitch, width, height,
             entry.backingBitmap->Is8BPP() ? TVPTextureFormat::Gray
                                           : TVPTextureFormat::RGBA,
-            RENDER_CREATE_TEXTURE_FLAG_ANY);
+            RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
         return entry.sourceTexture;
     }
 

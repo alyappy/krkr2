@@ -251,12 +251,16 @@ namespace motion::detail {
             node.hasSource = checkHasSource(psbNode, rootLayerList);
             const bool emoteLikeMotion = detail::isEmoteLikeMotion(runtime) ||
                 !runtime.parameterEntries.empty();
-            if(emoteLikeMotion && node.hasSource && node.stencilType == 0) {
-                // e-mote PSB（type=0）常把 stencilType 写成 0；sub_6BD8DC 中 0
-                // 会判不可见。 参考 sdl3：有 content 的图层应参与绘制。
+            if((emoteLikeMotion || node.nodeType == 0) && node.hasSource &&
+               node.stencilType == 0) {
+                // e-mote PSB（type=0）与非 e-mote 的 .mtn 图层节点常把
+                // stencilType 写成 0；sub_6BD8DC 中 0 会判不可见。
+                // 有源图像的 OBJ/e-mote 图层应参与绘制。
                 node.stencilTypeBase = 1;
                 node.stencilType = 1;
-            } else if(!hasStencilTypeKey && emoteLikeMotion && node.hasSource) {
+            } else if(!hasStencilTypeKey &&
+                      (emoteLikeMotion || node.nodeType == 0) &&
+                      node.hasSource) {
                 node.stencilTypeBase = 1;
                 node.stencilType = 1;
             }
