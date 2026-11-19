@@ -39,6 +39,10 @@ public class DialogMessage {
                 setTitle(Title).
                 setMessage(Text).
                 setCancelable(false);
+        if (Buttons == null || Buttons.length == 0) {
+            builder = builder.setPositiveButton(android.R.string.ok, (dialog, which) -> onButtonClick(0));
+            return builder;
+        }
         if (Buttons.length >= 1) {
             builder = builder.setPositiveButton(Buttons[0], (dialog, which) -> onButtonClick(0));
         }

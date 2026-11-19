@@ -29,7 +29,9 @@ void TVPPreferenceForm::initPref(const tPreferenceScreen *config) {
         }
     }
     Widget *nullcell = new Widget();
-    nullcell->setContentSize(Size(PrefList->getContentSize().width, 200));
+    nullcell->setContentSize(
+        Size(PrefList->getContentSize().width,
+             200.f * TVPMainScene::GetInstance()->getUIScale()));
     PrefList->pushBackCustomItem(nullcell);
 }
 
@@ -148,6 +150,7 @@ void tPreferenceItemConstant::initController(const NodeMap &allNodes) {
     sizeTmp.height += addHeight;
     root->setContentSize(sizeTmp);
     ui::Helper::doLayout(root);
+    _title->setPositionY(sizeTmp.height * 0.5f);
     setContentSize(sizeTmp);
 }
 
@@ -335,11 +338,13 @@ void TVPCustomPreferenceForm::initFromInfo(
             _setter(i, val);
         };
         item->autorelease();
-        item->initFromInfo(i, size, nullptr);
+        item->initFromInfo(i, size, "");
         _listview->pushBackCustomItem(item);
     }
     Widget *nullcell = new Widget();
-    nullcell->setContentSize(Size(_listview->getContentSize().width, 200));
+    nullcell->setContentSize(
+        Size(_listview->getContentSize().width,
+             200.f * TVPMainScene::GetInstance()->getUIScale()));
     _listview->pushBackCustomItem(nullcell);
 }
 
@@ -512,7 +517,9 @@ void KeyMapPreferenceForm::initData() {
 	}
 #endif
     Widget *nullcell = new Widget();
-    nullcell->setContentSize(Size(PrefList->getContentSize().width, 200));
+    nullcell->setContentSize(
+        Size(PrefList->getContentSize().width,
+             200.f * TVPMainScene::GetInstance()->getUIScale()));
     PrefList->pushBackCustomItem(nullcell);
 }
 

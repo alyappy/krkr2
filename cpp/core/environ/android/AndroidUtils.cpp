@@ -522,20 +522,26 @@ int TVPShowSimpleMessageBox(const char *pszText, const char *pszTitle,
         jstring jstrTitle = methodInfo.env->NewStringUTF(pszTitle);
         jstring jstrText = methodInfo.env->NewStringUTF(pszText);
         jclass strcls = methodInfo.env->FindClass("java/lang/String");
+        const unsigned int btnCount = btnText ? nButton : 0;
         jobjectArray btns =
-            methodInfo.env->NewObjectArray(nButton, strcls, nullptr);
-        for(unsigned int i = 0; i < nButton; ++i) {
+            methodInfo.env->NewObjectArray(btnCount, strcls, nullptr);
+        for(unsigned int i = 0; i < btnCount; ++i) {
             jstring jstrBtn = methodInfo.env->NewStringUTF(btnText[i]);
             methodInfo.env->SetObjectArrayElement(btns, i, jstrBtn);
             methodInfo.env->DeleteLocalRef(jstrBtn);
         }
 
+        {
+            std::lock_guard<std::mutex> resetLk(MessageBoxLock);
+            MsgBoxRet = -2;
+        }
         methodInfo.env->CallStaticVoidMethod(
             methodInfo.classID, methodInfo.methodID, jstrTitle, jstrText, btns);
 
         methodInfo.env->DeleteLocalRef(jstrTitle);
         methodInfo.env->DeleteLocalRef(jstrText);
         methodInfo.env->DeleteLocalRef(btns);
+        methodInfo.env->DeleteLocalRef(strcls);
         methodInfo.env->DeleteLocalRef(methodInfo.classID);
 
         std::unique_lock<std::mutex> lk(MessageBoxLock);
@@ -592,7 +598,10 @@ int TVPShowSimpleInputBox(ttstr &text, const ttstr &caption,
             methodInfo.env->DeleteLocalRef(jstrBtn);
         }
 
-        MsgBoxRet = -2;
+        {
+            std::lock_guard<std::mutex> resetLk(MessageBoxLock);
+            MsgBoxRet = -2;
+        }
         methodInfo.env->CallStaticVoidMethod(methodInfo.classID,
                                              methodInfo.methodID, jstrTitle,
                                              jstrPrompt, jstrText, btns);
@@ -601,6 +610,7 @@ int TVPShowSimpleInputBox(ttstr &text, const ttstr &caption,
         methodInfo.env->DeleteLocalRef(jstrText);
         methodInfo.env->DeleteLocalRef(jstrPrompt);
         methodInfo.env->DeleteLocalRef(btns);
+        methodInfo.env->DeleteLocalRef(strcls);
         methodInfo.env->DeleteLocalRef(methodInfo.classID);
 
         std::unique_lock<std::mutex> lk(MessageBoxLock);
@@ -842,8 +852,8 @@ static bool TVPWriteDataToFileJava(const std::string &filename,
                 methodInfo.classID, methodInfo.methodID, jstr, arr);
             methodInfo.env->DeleteLocalRef(arr);
             methodInfo.env->DeleteLocalRef(jstr);
-            methodInfo.env->DeleteLocalRef(methodInfo.classID);
         } while(!fileutil->isFileExist(filename) && --retry);
+        methodInfo.env->DeleteLocalRef(methodInfo.classID);
         return ret;
     }
     return false;

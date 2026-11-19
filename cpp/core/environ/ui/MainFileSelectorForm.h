@@ -64,16 +64,18 @@ protected:
         static HistoryCell *create(const std::string &fullpath,
                                    const std::string &prefix,
                                    const std::string &pathname,
-                                   const std::string &filename) {
+                                   const std::string &filename,
+                                   float width = 0.f) {
             auto *ret = new HistoryCell();
             ret->autorelease();
             ret->init();
-            ret->initInfo(fullpath, prefix, pathname, filename);
+            ret->initInfo(fullpath, prefix, pathname, filename, width);
             return ret;
         }
 
         void initInfo(const std::string &fullpath, const std::string &prefix,
-                      const std::string &pathname, const std::string &filename);
+                      const std::string &pathname, const std::string &filename,
+                      float width = 0.f);
 
         void initFunction(const ccWidgetClickCallback &funcDel,
                           const ccWidgetClickCallback &funcJump,

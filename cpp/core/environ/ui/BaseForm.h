@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include "2d/CCNode.h"
 #include <unordered_map>
 
@@ -114,18 +115,22 @@ protected:
         return initUILayout(Csd::NodeBuilderFn{}, body, Csd::NodeBuilderFn{});
     }
 
-    static cocos2d::Size
-    rearrangeHeaderSize(const cocos2d::Size &containerSize) {
-        return { containerSize.width, containerSize.height * 0.1f };
+    static cocos2d::Size rearrangeHeaderSize(const cocos2d::Size &containerSize,
+                                             float scale = 1.f) {
+        const float h =
+            std::clamp(120.f * scale, 36.f, containerSize.height * 0.14f);
+        return { containerSize.width, h };
     }
 
     static cocos2d::Size rearrangeBodySize(const cocos2d::Size &containerSize) {
         return { containerSize.width, containerSize.height * 0.8f };
     }
 
-    static cocos2d::Size
-    rearrangeFooterSize(const cocos2d::Size &containerSize) {
-        return { containerSize.width, containerSize.height * 0.1f };
+    static cocos2d::Size rearrangeFooterSize(const cocos2d::Size &containerSize,
+                                             float scale = 1.f) {
+        const float h =
+            std::clamp(200.f * scale, 64.f, containerSize.height * 0.25f);
+        return { containerSize.width, h };
     }
 
     virtual void bindHeaderController(const Node *allNodes) = 0;

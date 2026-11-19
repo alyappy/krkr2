@@ -16,16 +16,12 @@ using namespace cocos2d::ui;
 // const char *const FileName_Body = "ui/SelectList.csb";
 
 void iTVPHalfScreenForm::rearrangeLayout() {
-    float scale = TVPMainScene::GetInstance()->getUIScale();
     cocos2d::Size sceneSize = TVPMainScene::GetInstance()->getUINodeSize();
     sceneSize.height *= 0.5f;
     setContentSize(sceneSize);
     if(RootNode) {
-        sceneSize.width /= scale;
-        sceneSize.height /= scale;
         RootNode->setContentSize(sceneSize);
         ui::Helper::doLayout(RootNode);
-        RootNode->setScale(scale);
     }
 }
 
@@ -36,6 +32,9 @@ TVPSelectListForm::create(const std::vector<std::string> &info,
     auto *ret = new TVPSelectListForm();
     ret->autorelease();
     ret->FuncOK = funcok;
+    cocos2d::Size halfSize = TVPMainScene::GetInstance()->getUINodeSize();
+    halfSize.height *= 0.5f;
+    ret->setContentSize(halfSize);
     ret->initUILayout(Csd::NodeBuilderFn{}, Csd::createSelectList,
                       Csd::NodeBuilderFn{});
     ret->initWithInfo(info, highlight_tid);
@@ -113,6 +112,9 @@ TVPTextPairInputForm *TVPTextPairInputForm::create(
     auto *ret = new TVPTextPairInputForm();
     ret->autorelease();
     ret->FuncOK = funcok;
+    cocos2d::Size halfSize = TVPMainScene::GetInstance()->getUINodeSize();
+    halfSize.height *= 0.5f;
+    ret->setContentSize(halfSize);
     ret->initUILayout(Csd::NodeBuilderFn{}, Csd::createTextPairInput,
                       Csd::NodeBuilderFn{});
     ret->initWithInfo(text1, text2);
@@ -151,6 +153,9 @@ TVPKeyPairSelectForm::create(const std::function<void(int)> &funcok) {
     auto *ret = new TVPKeyPairSelectForm;
     ret->autorelease();
     ret->_funcok = funcok;
+    cocos2d::Size halfSize = TVPMainScene::GetInstance()->getUINodeSize();
+    halfSize.height *= 0.5f;
+    ret->setContentSize(halfSize);
     ret->initUILayout(Csd::createSelectList);
     ret->initWithInfo();
     return ret;

@@ -828,24 +828,20 @@ void TVPMainScene::setMaskLayTouchBegain(
 
 static float _getUIScale() {
     auto glview = Director::getInstance()->getOpenGLView();
-    float factor = (glview->getScaleX() + glview->getScaleY()) / 2;
-    factor /= Device::getDPI(); // inch per pixel
     cocos2d::Size screenSize = glview->getFrameSize();
     cocos2d::Size designSize = glview->getDesignResolutionSize();
-    designSize.width = designSize.height * screenSize.width / screenSize.height;
-    screenSize.width = factor * designSize.width;
+    if(screenSize.height > 0.f) {
+        designSize.width =
+            designSize.height * screenSize.width / screenSize.height;
+    }
 #ifdef _WIN32
-    // if (screenSize.width > 3.5433) return 0.35f; // 7 inch @ 16:9
-    // device
-    return 0.35f;
+    return 0.40f;
+#else
+    const float shortSide = std::min(designSize.width, designSize.height);
+    const float scaleByWidth = 0.0005f * designSize.width;
+    const float scaleByHeight = 0.0009f * shortSide;
+    return std::max(0.35f, std::min(scaleByWidth, scaleByHeight));
 #endif
-    // 	char tmp[128];
-    // 	sprintf(tmp, "screenSize.width = %f",
-    // (float)screenSize.width); 	TVPPrintLog(tmp); #if CC_PLATFORM_IOS
-    // == CC_TARGET_PLATFORM 	return /*sqrtf*/(0.0005f / factor) *
-    // screenSize.width; #else
-    return /*sqrtf*/ (0.0005f / factor) * screenSize.width;
-    // #endif
 }
 
 float TVPMainScene::getUIScale() {

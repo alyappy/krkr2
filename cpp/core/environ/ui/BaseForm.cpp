@@ -89,22 +89,18 @@ bool iTVPBaseForm::initUILayout(const Csd::NodeBuilderFn &naviBarCall,
     }
 
     const auto scale = TVPMainScene::GetInstance()->getUIScale();
-    const bool hasHeader = static_cast<bool>(naviBarCall);
-    const bool hasFooter = static_cast<bool>(bottomBarCall);
-    const auto headerSize = rearrangeHeaderSize(containerSize);
-    const auto footerSize = rearrangeFooterSize(containerSize);
-    const cocos2d::Size bodySize(containerSize.width,
-                                 containerSize.height -
-                                     (hasHeader ? headerSize.height : 0) -
-                                     (hasFooter ? footerSize.height : 0));
-
     auto *naviBar = naviBarCall
-        ? naviBarCall(rearrangeHeaderSize(containerSize), scale)
+        ? naviBarCall(rearrangeHeaderSize(containerSize, scale), scale)
         : nullptr;
-    auto *body = bodyCall(bodySize, scale);
     auto *bottomBar = bottomBarCall
-        ? bottomBarCall(rearrangeFooterSize(containerSize), scale)
+        ? bottomBarCall(rearrangeFooterSize(containerSize, scale), scale)
         : nullptr;
+    const float headerH = naviBar ? naviBar->getContentSize().height : 0.f;
+    const float footerH = bottomBar ? bottomBar->getContentSize().height : 0.f;
+    const cocos2d::Size bodySize(
+        containerSize.width,
+        std::max(0.f, containerSize.height - headerH - footerH));
+    auto *body = bodyCall(bodySize, scale);
 
     RootNode = body;
     if(!RootNode) {

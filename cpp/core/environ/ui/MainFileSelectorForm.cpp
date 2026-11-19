@@ -1,5 +1,7 @@
 #include "MainFileSelectorForm.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 
 #include "cocos2d.h"
@@ -137,7 +139,17 @@ void TVPMainFileSelectorForm::runFromPath(const std::string &path) {
     // int archiveType;
     if(checkStartupTjsScript(path)) {
         doStartup(path);
-    } else if((/*archiveType = */ TVPCheckArchive(ttstr{ path })) == 1) {
+        return;
+    }
+    auto splitPath = pathSplit(path);
+    std::string lowerName = splitPath.second;
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if(lowerName == "startup.tjs" && !splitPath.first.empty()) {
+        doStartup(splitPath.first);
+        return;
+    }
+    if((/*archiveType = */ TVPCheckArchive(ttstr{ path })) == 1) {
         doStartup(path);
     } /*else if(archiveType == 0 && TVPCheckIsVideoFile(path.c_str())) {
         spdlog::info("Opening video file: {}", path);
@@ -182,8 +194,20 @@ bool TVPMainFileSelectorForm::checkStartupTjsScript(const std::string &path) {
 #else
     auto p = std::filesystem::path(path);
 #endif
-    if(std::filesystem::is_directory(p)) {
-        return std::filesystem::exists(p / str_startup_tjs);
+    std::error_code ec;
+    if(!std::filesystem::is_directory(p, ec)) {
+        return false;
+    }
+    if(std::filesystem::exists(p / str_startup_tjs, ec)) {
+        return true;
+    }
+    for(const auto &entry : std::filesystem::directory_iterator(p, ec)) {
+        std::string name = entry.path().filename().u8string();
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if(name == str_startup_tjs) {
+            return true;
+        }
     }
     return false;
 }
@@ -219,7 +243,8 @@ void TVPMainFileSelectorForm::initFromWidget() {
     _LoadHistory();
     setContentSize(TVPMainScene::GetInstance()->getUINodeSize());
 
-    Node *root = Csd::createMainFileSelector(this->getContentSize(), 1);
+    const float scale = TVPMainScene::GetInstance()->getUIScale();
+    Node *root = Csd::createMainFileSelector(this->getContentSize(), scale);
 
     addChild(root);
 
@@ -228,7 +253,7 @@ void TVPMainFileSelectorForm::initFromWidget() {
     // TODO new node
     _fileOperateMenuNode = _historyList;
     inherit::initUILayout(Csd::createNaviBarWithMenu, Csd::createTableView,
-                          Csd::createEmpty, _fileList);
+                          Csd::NodeBuilderFn{}, _fileList);
 }
 
 void TVPMainFileSelectorForm::startup(const std::string &path) {
@@ -258,18 +283,19 @@ void TVPOpenPatchLibUrl();
 void TVPMainFileSelectorForm::showMenu(Ref *) {
     if(!_menu) {
         const cocos2d::Size uiSize = getContentSize();
-        cocos2d::Size menuTargetW = uiSize;
+        const float uiScale = TVPMainScene::GetInstance()->getUIScale();
+        float menuTargetW = uiSize.width;
         if(uiSize.width > uiSize.height) {
-            menuTargetW.width /= 3;
+            menuTargetW =
+                std::min(uiSize.width * 0.36f, Csd::kCanvasMenuListW * uiScale);
+            menuTargetW = std::max(menuTargetW, uiSize.width * 0.25f);
         } else {
-            menuTargetW.width *= 0.6f;
+            menuTargetW = uiSize.width * 0.65f;
         }
-        // MenuList.csb 设计宽 720；拉伸高度使缩放后恰好铺满屏幕高度
-        const float menuScale = menuTargetW.width / Csd::kCanvasMenuListW;
-        const cocos2d::Size menuDesignSize(Csd::kCanvasMenuListW,
-                                           uiSize.height / menuScale);
+        const float menuScale = menuTargetW / Csd::kCanvasMenuListW;
+        const cocos2d::Size menuSize(menuTargetW, uiSize.height);
 
-        _menu = Csd::createMenuList(menuDesignSize, 1.f);
+        _menu = Csd::createMenuList(menuSize, menuScale);
         NodeMap reader("", _menu);
         _menu->setAnchorPoint(Vec2::ZERO);
         _menu->setPosition(Vec2(uiSize.width, 0));
@@ -285,7 +311,6 @@ void TVPMainFileSelectorForm::showMenu(Ref *) {
         _mask->addChild(_touchHideMenu);
         addChild(_mask);
         addChild(_menu);
-        _menu->setScale(menuScale);
         ui::Helper::doLayout(_menu);
 
         newLocalPref = reader.findController("newLocalPref");
@@ -313,10 +338,12 @@ void TVPMainFileSelectorForm::showMenu(Ref *) {
             TVPMainScene::GetInstance()->pushUIForm(
                 TVPGlobalPreferenceForm::create());
         });
-        reader.findWidget("btnGlobalPref")->addClickEventListener([](Ref *) {
-            TVPMainScene::GetInstance()->pushUIForm(
-                TVPGlobalPreferenceForm::create());
-        });
+        reader.findWidget("btnGlobalPref")
+            ->addClickEventListener([this](Ref *) {
+                TVPMainScene::GetInstance()->pushUIForm(
+                    TVPGlobalPreferenceForm::create());
+                hideMenu(nullptr);
+            });
         reader.findWidget("btnNewLocalPref")
             ->addClickEventListener([this](Ref *) {
                 if(IndividualConfigManager::GetInstance()->CreatePreferenceAt(
@@ -328,9 +355,12 @@ void TVPMainFileSelectorForm::showMenu(Ref *) {
             });
         reader.findWidget("btnLocalPref")->addClickEventListener([this](Ref *) {
             onShowPreferenceConfigAt(CurrentPath);
+            hideMenu(nullptr);
         });
-        reader.findWidget("btnHelp")->addClickEventListener(
-            [this](Ref *) { TVPTipsHelpForm::show(); });
+        reader.findWidget("btnHelp")->addClickEventListener([this](Ref *) {
+            TVPTipsHelpForm::show();
+            hideMenu(nullptr);
+        });
 
         reader.findWidget("btnAbout")->addClickEventListener([](Ref *) {
             std::string versionText = "Version ";
@@ -477,18 +507,18 @@ void TVPMainFileSelectorForm::ListHistory() {
         return;
 
     _historyList->removeAllChildren();
+    const float uiScale = TVPMainScene::GetInstance()->getUIScale();
+    const float listW = _historyList->getContentSize().width;
 
-    auto createEmptyCell = [this]() -> HistoryCell * {
+    auto createEmptyCell = [listW](float h) -> HistoryCell * {
         auto *cell = new HistoryCell();
         cell->init();
-        cocos2d::Size cellSize = _historyList->getContentSize();
-        cellSize.height = 100;
-        cell->setContentSize(cellSize);
+        cell->setContentSize(cocos2d::Size(listW, h));
         return cell;
     };
 
     // 添加顶部空白 cell
-    _historyList->pushBackCustomItem(createEmptyCell());
+    _historyList->pushBackCustomItem(createEmptyCell(16.f * uiScale));
 
     for(auto it = _HistoryPath.begin(); it != _HistoryPath.end();) {
         const std::string &fullPath = *it;
@@ -507,8 +537,8 @@ void TVPMainFileSelectorForm::ListHistory() {
         auto grandParentPath = parentPathSpt.first;
         auto parentName = parentPathSpt.second;
 
-        HistoryCell *cell = HistoryCell::create(fullPath, grandParentPath + "/",
-                                                parentName, "/" + lastName);
+        HistoryCell *cell = HistoryCell::create(
+            fullPath, grandParentPath + "/", parentName, "/" + lastName, listW);
 
         Widget::ccWidgetClickCallback funcConf;
         if(TVPCheckExistentLocalFile(parentPath +
@@ -524,15 +554,16 @@ void TVPMainFileSelectorForm::ListHistory() {
             [this, fullPath](Ref *) { startup(fullPath); });
 
         cocos2d::Size cellSize = cell->getContentSize();
-        cellSize.width = _historyList->getContentSize().width;
+        cellSize.width = listW;
         cell->setContentSize(cellSize);
+        cell->rearrangeLayout();
 
         _historyList->pushBackCustomItem(cell);
         ++it;
     }
 
     // 添加底部空白 cell
-    _historyList->pushBackCustomItem(createEmptyCell());
+    _historyList->pushBackCustomItem(createEmptyCell(100.f * uiScale));
 }
 
 void TVPMainFileSelectorForm::RemoveHistoryCell(cocos2d::Ref *btn,
@@ -569,12 +600,16 @@ void TVPMainFileSelectorForm::onKeyPressed(
     }
 }
 
-void TVPMainFileSelectorForm::HistoryCell::initInfo(
-    const std::string &fullpath, const std::string &prefix,
-    const std::string &pathname, const std::string &filename) {
+void TVPMainFileSelectorForm::HistoryCell::initInfo(const std::string &fullpath,
+                                                    const std::string &prefix,
+                                                    const std::string &pathname,
+                                                    const std::string &filename,
+                                                    float width) {
     _fullpath = fullpath;
 
-    _root = Csd::createRecentListItem(getContentSize(), 1);
+    const float uiScale = TVPMainScene::GetInstance()->getUIScale();
+    const float cellW = width > 0.f ? width : getContentSize().width;
+    _root = Csd::createRecentListItem(cocos2d::Size(cellW, 0.f), uiScale);
     NodeMap reader("", _root);
     _scrollview = static_cast<cocos2d::ui::ScrollView *>(
         reader.findController("scrollview"));
@@ -598,6 +633,8 @@ void TVPMainFileSelectorForm::HistoryCell::initInfo(
     _prefix->setString(prefix);
     _path->setString(pathname);
     _file->setString(filename);
+    _path->setPositionX(_prefix->getContentSize().width);
+    _file->setPositionX(_path->getContentSize().width);
 
     setContentSize(_root->getContentSize());
     addChild(_root);
@@ -608,6 +645,8 @@ void TVPMainFileSelectorForm::HistoryCell::rearrangeLayout() {
         return;
     _root->setContentSize(this->getContentSize());
     ui::Helper::doLayout(_root);
+    _path->setPositionX(_prefix->getContentSize().width);
+    _file->setPositionX(_path->getContentSize().width);
     Vec2 pt = Vec2::ZERO;
     pt.x = _file->getContentSize().width;
     Vec2 ptWorld = _file->convertToWorldSpace(pt);

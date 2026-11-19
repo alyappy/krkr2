@@ -555,12 +555,20 @@ public class KR2Activity extends Cocos2dxActivity implements ActivityCompat.OnRe
             DeleteFile(target.getAbsolutePath()); // to avoid number suffix name
         } else {
             File parent = target.getParentFile();
-            assert parent != null;
-            if (!parent.exists())
+            if (parent != null && !parent.exists()) {
                 CreateFolders(parent.getAbsolutePath());
+            }
         }
-
-        return true;
+        try (FileOutputStream fos = new FileOutputStream(target)) {
+            if (data != null && data.length > 0) {
+                fos.write(data);
+            }
+            fos.flush();
+            return true;
+        } catch (IOException e) {
+            Log.e("FileUtils", "Error writing file " + target.getAbsolutePath(), e);
+            return false;
+        }
     }
 
     /**

@@ -119,21 +119,25 @@ void TVPBaseFileSelectorForm::ListDir(std::string path) {
     ParentPath = fst;
 
     if(_title) {
-
-        const cocos2d::Size dispSize = _title->getContentSize();
-        const size_t fontSize =
-            _title->getTitleRenderer()->getRenderingFontSize();
-        const size_t pathLen = snd.length();
-        const ptrdiff_t overflowChar =
-            (pathLen * fontSize - dispSize.width) / fontSize;
-        if(overflowChar > 0) {
-            constexpr char suffix[] = "...";
-            const size_t renderCharCount =
-                pathLen - overflowChar - std::size(suffix);
-            const std::string curPath = snd.substr(0, renderCharCount);
-            _title->setTitleText(curPath + suffix);
-        } else {
-            _title->setTitleText(snd);
+        std::string displayTitle = snd.empty() ? path : snd;
+        const float maxW = _title->getContentSize().width;
+        _title->setTitleText(displayTitle);
+        if(maxW > 0.f && _title->getTitleRenderer() &&
+           _title->getTitleRenderer()->getContentSize().width > maxW) {
+            constexpr const char *suffix = "...";
+            while(displayTitle.size() > 1) {
+                size_t len = displayTitle.size() - 1;
+                while(len > 0 &&
+                      (static_cast<unsigned char>(displayTitle[len]) & 0xC0) ==
+                          0x80) {
+                    --len;
+                }
+                displayTitle.resize(len);
+                _title->setTitleText(displayTitle + suffix);
+                if(_title->getTitleRenderer()->getContentSize().width <= maxW) {
+                    break;
+                }
+            }
         }
     }
 
@@ -208,8 +212,8 @@ void TVPBaseFileSelectorForm::onCellLongPress(int idx) {
         }
         if(!_fileOperateMenu) {
             const float scale = TVPMainScene::GetInstance()->getUIScale();
-            const auto uiSize = TVPMainScene::GetInstance()->getUINodeSize();
-            _fileOperateMenu = Csd::createFileManageMenu(uiSize, scale);
+            const auto menuSize = _fileOperateMenuNode->getContentSize();
+            _fileOperateMenu = Csd::createFileManageMenu(menuSize, scale);
             NodeMap reader("", _fileOperateMenu);
             LocaleConfigManager::GetInstance()->initText(
                 reader.findController<Text>("title"));
@@ -289,10 +293,6 @@ void TVPBaseFileSelectorForm::onCellLongPress(int idx) {
                               this, std::placeholders::_1));
             }
             _fileOperateMenulist->removeAllChildrenWithCleanup(false);
-            const float menuLayoutScale = 1.5f;
-            _fileOperateMenu->setScale(1 / menuLayoutScale);
-            _fileOperateMenu->setContentSize(
-                _fileOperateMenuNode->getContentSize() * menuLayoutScale);
             _fileOperateMenu->setPosition(_fileOperateMenuNode->getPosition());
             _fileOperateMenuNode->getParent()->addChild(_fileOperateMenu);
             ui::Helper::doLayout(_fileOperateMenu);
@@ -372,16 +372,29 @@ void TVPBaseFileSelectorForm::onTitleClicked(cocos2d::Ref *owner) {
     }
     _listform = TVPListForm::create(cells);
     _listform->show();
-    // march all button's text in its width
+    // match all button's text in its width
     for(Button *btn : buttons) {
-        cocos2d::Size dispSize = btn->getTitleRenderer()->getContentSize();
-        cocos2d::Size realSize = btn->getContentSize();
-        if(dispSize.width > realSize.width) {
-            std::string text = btn->getTitleText();
-            float ratio = realSize.width / dispSize.width;
+        if(!btn->getTitleRenderer())
+            continue;
+        const float maxW = btn->getContentSize().width;
+        if(maxW <= 0.f)
+            continue;
+        std::string text = btn->getTitleText();
+        if(btn->getTitleRenderer()->getContentSize().width > maxW) {
             const std::string prefix("...");
-            int charCutCount = text.size() * (1 - ratio) + prefix.size() + 1;
-            btn->setTitleText(prefix + text.substr(charCutCount));
+            size_t cutPos = 0;
+            while(cutPos < text.size()) {
+                ++cutPos;
+                while(cutPos < text.size() &&
+                      (static_cast<unsigned char>(text[cutPos]) & 0xC0) ==
+                          0x80) {
+                    ++cutPos;
+                }
+                btn->setTitleText(prefix + text.substr(cutPos));
+                if(btn->getTitleRenderer()->getContentSize().width <= maxW) {
+                    break;
+                }
+            }
         }
     }
 }
@@ -457,7 +470,8 @@ ssize_t TVPBaseFileSelectorForm::numberOfCellsInTableView(TableView *table) {
 cocos2d::Size TVPBaseFileSelectorForm::tableCellSizeForIndex(TableView *table,
                                                              ssize_t idx) {
     if((size_t)idx >= CurrentDirList.size()) {
-        return { table->getContentSize().width, 200 };
+        return { table->getContentSize().width,
+                 200.f * TVPMainScene::GetInstance()->getUIScale() };
     }
     FileInfo &info = CurrentDirList[idx];
     if(info.CellSize.width == 0.f) {
@@ -845,29 +859,26 @@ TVPListForm::create(const std::vector<cocos2d::ui::Widget *> &cells) {
 void TVPListForm::initFromInfo(
     const std::vector<cocos2d::ui::Widget *> &cells) {
     init();
-    float scale = TVPMainScene::GetInstance()->getUIScale();
-    cocos2d::Size sceneSize =
-        TVPMainScene::GetInstance()->getUINodeSize() / scale;
-    setScale(scale);
+    const float scale = TVPMainScene::GetInstance()->getUIScale();
+    const cocos2d::Size sceneSize =
+        TVPMainScene::GetInstance()->getUINodeSize();
     setContentSize(sceneSize);
-    _root = Csd::createListViewPopup(sceneSize, 1);
-    NodeMap reader("", _root);
-    ListView *listview =
-        dynamic_cast<ListView *>(reader.findController("list"));
-    float height = 10;
+    float height = 10.f * scale;
     for(Widget *cell : cells) {
         height += cell->getContentSize().height;
     }
-    _root->setAnchorPoint(cocos2d::Size(0.5, 0.5));
-    _root->setPosition(sceneSize / 2);
-    sceneSize.width *= 0.8f;
-    sceneSize.height *= 0.8f;
-    if(height < sceneSize.height * scale) {
-        sceneSize.height = height;
+    cocos2d::Size popupSize(sceneSize.width * 0.8f, sceneSize.height * 0.8f);
+    if(height < popupSize.height) {
+        popupSize.height = height;
     }
-    _root->setContentSize(sceneSize);
+    _root = Csd::createListViewPopup(popupSize, scale);
+    NodeMap reader("", _root);
+    ListView *listview =
+        dynamic_cast<ListView *>(reader.findController("list"));
+    _root->setAnchorPoint(cocos2d::Vec2(0.5f, 0.5f));
+    _root->setPosition(sceneSize * 0.5f);
     ui::Helper::doLayout(_root);
-    float width = listview->getContentSize().width;
+    const float width = listview->getContentSize().width;
     for(Widget *cell : cells) {
         cocos2d::Size size = cell->getContentSize();
         size.width = width;
@@ -875,7 +886,8 @@ void TVPListForm::initFromInfo(
         ui::Helper::doLayout(cell);
         listview->pushBackCustomItem(cell);
     }
-    if(listview->getItems().back()->getBottomBoundary() < 0) {
+    if(!listview->getItems().empty() &&
+       listview->getItems().back()->getBottomBoundary() < 0) {
         listview->setClippingEnabled(true);
     } else {
         listview->setBounceEnabled(false);
@@ -1019,23 +1031,21 @@ void TVPFileSelectorForm::close() {
 void TVPBaseFileSelectorForm::FileItemCellImpl::init(
     const Csd::NodeBuilderFn &nodeBuilderFn, float width) {
     TTouchEventRouter::init();
-    _root = nodeBuilderFn(cocos2d::Size(width, 48), 1);
+    const float scale = TVPMainScene::GetInstance()->getUIScale();
+    _root = nodeBuilderFn(cocos2d::Size(width, 0.f), scale);
 
     this->addChild(_root);
     OrigCellModelSize = _root->getContentSize();
     OrigCellModelSize.width = width;
-    // _root->setContentSize(OrigCellModelSize);
     setContentSize(OrigCellModelSize);
     DirIcon = _root->getChildByName(str_diricon);
     SelectBox = _root->getChildByName<CheckBox *>(str_select);
     // SelectBox->setTouchEnabled(false);
     FileNameNode = _root->getChildByName<Text *>(str_filename);
     if(DirIcon && FileNameNode) {
-        CellTextAreaSize = DirIcon->getContentSize();
-        CellTextAreaSize.width =
-            OrigCellModelSize.width - CellTextAreaSize.width;
-        CellTextAreaSize.height = 0;
         OrigCellTextSize = FileNameNode->getContentSize();
+        CellTextAreaSize.width = OrigCellTextSize.width;
+        CellTextAreaSize.height = 0;
     }
     auto *highLight = _root->getChildByName<Button *>("highlight");
     if(highLight) {
@@ -1078,12 +1088,17 @@ void TVPBaseFileSelectorForm::FileItemCellImpl::setInfo(int idx,
         FileNameNode->ignoreContentAdaptWithSize(true);
         FileNameNode->setTextAreaSize(CellTextAreaSize);
         FileNameNode->setString(info.NameForDisplay);
+        const float textH = FileNameNode->getContentSize().height;
+        const float padY =
+            std::max(0.f, OrigCellModelSize.height - OrigCellTextSize.height);
         cocos2d::Size size(OrigCellModelSize);
-        size.height +=
-            FileNameNode->getContentSize().height - OrigCellTextSize.height;
+        size.height = std::max(OrigCellModelSize.height, textH + padY);
         _root->setContentSize(size);
         setContentSize(size);
         FileNameNode->ignoreContentAdaptWithSize(false);
+        FileNameNode->setContentSize(cocos2d::Size(
+            CellTextAreaSize.width, std::max(textH, size.height - padY)));
+        FileNameNode->setPositionY(size.height * 0.5f);
     }
     if(DirIcon)
         DirIcon->setVisible(info.IsDir && !showSelect);
