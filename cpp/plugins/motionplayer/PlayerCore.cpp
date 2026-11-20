@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "PlayerInternal.h"
+#include "PlayerRenderInternal.h"
 #include "SourceCache.h"
 #include "ncbind.hpp"
 
@@ -206,7 +207,17 @@ namespace motion {
         }
     }
 
-    Player::~Player() = default;
+    Player::~Player() {
+        if(_runtime) {
+            if(_runtime->sourceCacheNative) {
+                _runtime->sourceCacheNative->clearCache();
+                _runtime->sourceCacheNative->setSelfObject(tTJSVariant());
+                _runtime->sourceCacheNative = nullptr;
+            }
+            _runtime->sourceCacheObject.Clear();
+            render_detail::releaseRuntimeRenderLayers(*_runtime, true);
+        }
+    }
 
     bool Player::getPlaying() const {
         // Player_getPlaying @ 0x6D9794: return byte player+1099.

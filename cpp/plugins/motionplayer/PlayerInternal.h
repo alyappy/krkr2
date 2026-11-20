@@ -24,6 +24,7 @@
 #include "GraphicsLoaderIntf.h"
 #include "tvpgl.h"
 #include "RuntimeSupport.h"
+#include "SourceCache.h"
 #include "ResourceManager.h"
 #include "SeparateLayerAdaptor.h"
 #include "D3DAdaptor.h"
@@ -206,6 +207,10 @@ namespace motion {
         activateMotion(detail::PlayerRuntime &runtime,
                        const std::shared_ptr<detail::MotionSnapshot> &snapshot,
                        ResourceManager *resourceManager = nullptr) {
+            if(runtime.activeMotion && runtime.activeMotion != snapshot &&
+               runtime.sourceCacheNative) {
+                runtime.sourceCacheNative->clearCache();
+            }
             runtime.activeMotion = snapshot;
             runtime.timelines.clear();
             // Reset persistent node tree so it gets rebuilt for new motion
@@ -1617,6 +1622,139 @@ namespace motion {
         // Find a PSB resource node by source name. The motion layer `src`
         // field uses paths like "src/title/bg" and the PSB tree stores
         // resources under "source/title/icon/bg/pixel".
+        inline bool
+        queryPSBSourceGeometry(const detail::MotionSnapshot &snapshot,
+                               const std::string &source, int &outWidth,
+                               int &outHeight, double &outOriginX,
+                               double &outOriginY) {
+            outWidth = 0;
+            outHeight = 0;
+            outOriginX = 0.0;
+            outOriginY = 0.0;
+            if(source.empty() || isMotionCrossReference(source)) {
+                return false;
+            }
+
+            if(const auto it = snapshot.sourceGeometryCache.find(source);
+               it != snapshot.sourceGeometryCache.end()) {
+                outWidth = it->second.width;
+                outHeight = it->second.height;
+                outOriginX = it->second.originX;
+                outOriginY = it->second.originY;
+                return it->second.found;
+            }
+
+            detail::MotionSnapshot::CachedSourceGeometry result;
+
+            if(source.rfind("src/", 0) == 0 && snapshot.root) {
+                const auto afterSrc = source.substr(4);
+                const auto slash = afterSrc.find('/');
+                if(slash != std::string::npos) {
+                    const auto group = afterSrc.substr(0, slash);
+                    const auto name = afterSrc.substr(slash + 1);
+                    const auto iconPath = "source/" + group + "/icon/" + name;
+                    if(auto iconNode =
+                           navigatePSBPath(snapshot.root, iconPath)) {
+                        if(auto w = psbDictionaryNumber(iconNode, "width"))
+                            result.width = static_cast<int>(*w);
+                        if(auto h = psbDictionaryNumber(iconNode, "height"))
+                            result.height = static_cast<int>(*h);
+                        if(result.width <= 0) {
+                            if(auto tw = psbDictionaryNumber(iconNode,
+                                                             "truncated_width"))
+                                result.width = static_cast<int>(*tw);
+                        }
+                        if(result.height <= 0) {
+                            if(auto th = psbDictionaryNumber(
+                                   iconNode, "truncated_height"))
+                                result.height = static_cast<int>(*th);
+                        }
+                        if(auto ox = psbDictionaryNumber(iconNode, "originX"))
+                            result.originX = *ox;
+                        if(auto oy = psbDictionaryNumber(iconNode, "originY"))
+                            result.originY = *oy;
+
+                        const auto texturePath = "source/" + group + "/texture";
+                        const auto texturePixelPath = texturePath + "/pixel";
+                        if(result.width > 0 && result.height > 0) {
+                            const auto texIt =
+                                snapshot.resourcesByPath.find(texturePixelPath);
+                            const auto iconPixIt =
+                                snapshot.resourcesByPath.find(iconPath +
+                                                              "/pixel");
+                            if((texIt != snapshot.resourcesByPath.end() &&
+                                texIt->second &&
+                                !texIt->second->data.empty()) ||
+                               (iconPixIt != snapshot.resourcesByPath.end() &&
+                                iconPixIt->second &&
+                                !iconPixIt->second->data.empty())) {
+                                result.found = true;
+                            }
+                        }
+                        if(result.found || result.width > 0 ||
+                           result.height > 0) {
+                            snapshot.sourceGeometryCache.emplace(source,
+                                                                 result);
+                            outWidth = result.width;
+                            outHeight = result.height;
+                            outOriginX = result.originX;
+                            outOriginY = result.originY;
+                            return result.found;
+                        }
+                    }
+                }
+            }
+
+            const auto lastSlash = source.rfind('/');
+            const auto baseName = (lastSlash != std::string::npos)
+                ? source.substr(lastSlash + 1)
+                : source;
+            const auto targetSuffix = "/" + baseName + "/pixel";
+            for(const auto &[resPath, resource] : snapshot.resourcesByPath) {
+                if(resPath.size() >= targetSuffix.size() &&
+                   resPath.compare(resPath.size() - targetSuffix.size(),
+                                   targetSuffix.size(), targetSuffix) == 0) {
+                    const auto parentPath =
+                        resPath.substr(0, resPath.size() - 6);
+                    if(snapshot.root) {
+                        if(auto node =
+                               navigatePSBPath(snapshot.root, parentPath)) {
+                            if(auto w = psbDictionaryNumber(node, "width"))
+                                result.width = static_cast<int>(*w);
+                            if(auto h = psbDictionaryNumber(node, "height"))
+                                result.height = static_cast<int>(*h);
+                            if(result.width <= 0) {
+                                if(auto tw = psbDictionaryNumber(
+                                       node, "truncated_width"))
+                                    result.width = static_cast<int>(*tw);
+                            }
+                            if(result.height <= 0) {
+                                if(auto th = psbDictionaryNumber(
+                                       node, "truncated_height"))
+                                    result.height = static_cast<int>(*th);
+                            }
+                            if(auto ox = psbDictionaryNumber(node, "originX"))
+                                result.originX = *ox;
+                            if(auto oy = psbDictionaryNumber(node, "originY"))
+                                result.originY = *oy;
+                        }
+                    }
+                    if(result.width > 0 && result.height > 0 && resource &&
+                       !resource->data.empty()) {
+                        result.found = true;
+                        break;
+                    }
+                }
+            }
+
+            snapshot.sourceGeometryCache.emplace(source, result);
+            outWidth = result.width;
+            outHeight = result.height;
+            outOriginX = result.originX;
+            outOriginY = result.originY;
+            return result.found;
+        }
+
         // Aligned to libkrkr2.so sub_6948E8: navigates
         // source/<group>/icon/<name>. Also reads originX/originY from the icon
         // node (image anchor point, used in sub_6BC4F0: origin = pos - matrix ×
@@ -1717,18 +1855,79 @@ namespace motion {
                                iconLeft + outWidth <= textureWidth &&
                                iconTop + outHeight <= textureHeight) {
                                 bool texturePixelsAreBgra = false;
-                                std::vector<std::uint8_t> texturePixels;
-                                const auto textureCompress =
-                                    psbDictionaryString(textureNode,
-                                                        "compress");
-                                decodePsbPixelResource(
-                                    snapshot, texturePath,
-                                    *textureResIt->second, textureWidth,
-                                    textureHeight, textureCompress == "RL",
-                                    texturePixels, &texturePixelsAreBgra);
-                                const auto &pixelData = texturePixels.empty()
-                                    ? textureResIt->second->data
-                                    : texturePixels;
+                                const std::vector<std::uint8_t> *pixelVec =
+                                    nullptr;
+                                for(auto atlasIt =
+                                        snapshot.decodedAtlasLru.begin();
+                                    atlasIt != snapshot.decodedAtlasLru.end();
+                                    ++atlasIt) {
+                                    if(atlasIt->first == texturePath &&
+                                       atlasIt->second.width == textureWidth &&
+                                       atlasIt->second.height ==
+                                           textureHeight) {
+                                        snapshot.decodedAtlasLru.splice(
+                                            snapshot.decodedAtlasLru.begin(),
+                                            snapshot.decodedAtlasLru, atlasIt);
+                                        pixelVec =
+                                            &snapshot.decodedAtlasLru.front()
+                                                 .second.pixels;
+                                        texturePixelsAreBgra =
+                                            snapshot.decodedAtlasLru.front()
+                                                .second.isBgra;
+                                        break;
+                                    }
+                                }
+                                if(!pixelVec) {
+                                    std::vector<std::uint8_t> decodedAtlas;
+                                    const auto textureCompress =
+                                        psbDictionaryString(textureNode,
+                                                            "compress");
+                                    decodePsbPixelResource(
+                                        snapshot, texturePath,
+                                        *textureResIt->second, textureWidth,
+                                        textureHeight, textureCompress == "RL",
+                                        decodedAtlas, &texturePixelsAreBgra);
+                                    if(!decodedAtlas.empty()) {
+                                        constexpr std::size_t
+                                            kMaxAtlasCacheEntries = 2;
+                                        constexpr std::size_t
+                                            kMaxAtlasCacheBytes =
+                                                32u * 1024u * 1024u;
+                                        const std::size_t atlasBytes =
+                                            decodedAtlas.size();
+                                        detail::MotionSnapshot::DecodedPsbAtlas
+                                            cachedAtlas;
+                                        cachedAtlas.width = textureWidth;
+                                        cachedAtlas.height = textureHeight;
+                                        cachedAtlas.isBgra =
+                                            texturePixelsAreBgra;
+                                        cachedAtlas.pixels =
+                                            std::move(decodedAtlas);
+                                        snapshot.decodedAtlasLru.emplace_front(
+                                            texturePath,
+                                            std::move(cachedAtlas));
+                                        snapshot.decodedAtlasBytes +=
+                                            atlasBytes;
+                                        while(snapshot.decodedAtlasLru.size() >
+                                                  kMaxAtlasCacheEntries ||
+                                              (snapshot.decodedAtlasLru.size() >
+                                                   1 &&
+                                               snapshot.decodedAtlasBytes >
+                                                   kMaxAtlasCacheBytes)) {
+                                            snapshot.decodedAtlasBytes -=
+                                                snapshot.decodedAtlasLru.back()
+                                                    .second.pixels.size();
+                                            snapshot.decodedAtlasLru.pop_back();
+                                        }
+                                        pixelVec =
+                                            &snapshot.decodedAtlasLru.front()
+                                                 .second.pixels;
+                                    }
+                                }
+                                const auto &pixelData =
+                                    (pixelVec && !pixelVec->empty())
+                                    ? *pixelVec
+                                    : textureResIt->second->data;
                                 const size_t requiredSize =
                                     static_cast<size_t>(textureWidth) *
                                     static_cast<size_t>(textureHeight) * 4u;
@@ -1755,7 +1954,7 @@ namespace motion {
                                     }
                                     if(outDecodedIsBgra) {
                                         *outDecodedIsBgra =
-                                            !texturePixels.empty() &&
+                                            (pixelVec && !pixelVec->empty()) &&
                                             texturePixelsAreBgra;
                                     }
                                     return textureResIt->second.get();

@@ -349,16 +349,39 @@ namespace motion {
         };
 
         const int playerStencilType = _maskMode;
+        const std::uint64_t currentRenderPass = ++_runtime->renderPassCounter;
+        std::size_t scratchLeafCursor = 0;
+        std::size_t scratchComposedCursor = 0;
+        auto acquireScratchLayer = [&](std::vector<tTJSVariant> &pool,
+                                       std::size_t &cursor) -> tTJSVariant & {
+            if(cursor >= pool.size()) {
+                pool.emplace_back();
+            }
+            return pool[cursor++];
+        };
         auto ensureLeafItemLayer =
             [&](PreparedRenderItem &item) -> iTJSDispatch2 * {
             const tjs_int stateLayerId = item.layerId;
             if(stateLayerId == 0) {
-                return ensureReusableLayerObject(
-                    item.leafLayer, scratchOwner, scratchParent,
+                if(item.leafLayer.Type() == tvtObject &&
+                   item.leafLayer.AsObjectNoAddRef()) {
+                    return ensureReusableLayerObject(
+                        item.leafLayer, scratchOwner, scratchParent,
+                        static_cast<tTVPLayerType>(ltAlpha), false);
+                }
+                auto &slot = acquireScratchLayer(_runtime->scratchLeafLayers,
+                                                 scratchLeafCursor);
+                auto *layerObject = ensureReusableLayerObject(
+                    slot, scratchOwner, scratchParent,
                     static_cast<tTVPLayerType>(ltAlpha), false);
+                if(layerObject) {
+                    item.leafLayer = slot;
+                }
+                return layerObject;
             }
 
             auto &state = _runtime->renderLayerStates[stateLayerId];
+            state.lastUsedRenderPass = currentRenderPass;
             if(!state.initialized) {
                 state.layerId = stateLayerId;
                 state.absolute = _runtime->nextLayerAbsolute++;
@@ -402,9 +425,21 @@ namespace motion {
         };
         auto ensureComposedItemLayer =
             [&](PreparedRenderItem &item) -> iTJSDispatch2 * {
-            return ensureReusableLayerObject(
-                item.composedLayer, scratchOwner, scratchParent,
+            if(item.composedLayer.Type() == tvtObject &&
+               item.composedLayer.AsObjectNoAddRef()) {
+                return ensureReusableLayerObject(
+                    item.composedLayer, scratchOwner, scratchParent,
+                    static_cast<tTVPLayerType>(ltAlpha), false);
+            }
+            auto &slot = acquireScratchLayer(_runtime->scratchComposedLayers,
+                                             scratchComposedCursor);
+            auto *layerObject = ensureReusableLayerObject(
+                slot, scratchOwner, scratchParent,
                 static_cast<tTVPLayerType>(ltAlpha), false);
+            if(layerObject) {
+                item.composedLayer = slot;
+            }
+            return layerObject;
         };
         auto renderItemSourceToLayer =
             [&](PreparedRenderItem &item, iTJSDispatch2 *targetLayerObject,
@@ -680,8 +715,9 @@ namespace motion {
             return true;
         };
 
-        auto buildItemOutput = [&](auto &&self,
-                                   PreparedRenderItem *itemPtr) -> bool {
+        auto buildItemOutput = [&](auto &&self, PreparedRenderItem *itemPtr,
+                                   ResolvedSourceObject *outDirectSource =
+                                       nullptr) -> bool {
             if(!itemPtr) {
                 return false;
             }
@@ -752,6 +788,9 @@ namespace motion {
                     directTargetRect.right,
                     directTargetRect.bottom,
                 };
+                if(outDirectSource) {
+                    *outDirectSource = std::move(source);
+                }
                 return true;
             }
             if(!item.rawFlag21) {
@@ -911,13 +950,16 @@ namespace motion {
             if(item.parentItem) {
                 continue;
             }
-            if(!buildItemOutput(buildItemOutput, &item)) {
+            ResolvedSourceObject directSource;
+            if(!buildItemOutput(buildItemOutput, &item, &directSource)) {
                 continue;
             }
 
             try {
                 if(item.executedDirect) {
-                    auto source = resolveSourceObjectLike_0x6C1B70(item);
+                    auto source = directSource.image
+                        ? std::move(directSource)
+                        : resolveSourceObjectLike_0x6C1B70(item);
                     if(!source.image || source.width <= 0 ||
                        source.height <= 0) {
                         continue;
@@ -1147,6 +1189,17 @@ namespace motion {
         // libkrkr2.so Player_renderToCanvas_guess @ 0x6C8FCC resets the target
         // Layer clip once the top-level render-item walk is complete.
         renderLayer->ResetClip();
+        if(_runtime->renderLayerStates.size() > 32) {
+            for(auto it = _runtime->renderLayerStates.begin();
+                it != _runtime->renderLayerStates.end();) {
+                if(currentRenderPass - it->second.lastUsedRenderPass > 60) {
+                    releaseLayerObjectVariant(it->second.layerObject);
+                    it = _runtime->renderLayerStates.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
         if(!skipUpdate) {
             renderLayer->Update(false);
             detail::logoChainTraceLogf(

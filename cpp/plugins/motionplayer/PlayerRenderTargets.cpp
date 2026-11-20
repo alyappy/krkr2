@@ -782,15 +782,24 @@ namespace motion {
             bool createdOrChanged = true;
         };
 
+        std::size_t accurateSlaScratchCursor = 0;
         auto ensureAccurateSlaItemLayer =
             [&](PreparedRenderItem &item,
                 tTVPLayerType layerType) -> AccurateSlaItemLayer {
             const tjs_int stateLayerId = item.layerId;
             if(stateLayerId == 0) {
-                return { ensureReusableLayerObject(
-                             item.leafLayer, layerTreeOwner, targetLayerObject,
-                             layerType, false),
-                         true };
+                if(accurateSlaScratchCursor >=
+                   _runtime->scratchLeafLayers.size()) {
+                    _runtime->scratchLeafLayers.emplace_back();
+                }
+                auto &slot =
+                    _runtime->scratchLeafLayers[accurateSlaScratchCursor++];
+                auto *layerObject = ensureReusableLayerObject(
+                    slot, layerTreeOwner, targetLayerObject, layerType, false);
+                if(layerObject) {
+                    item.leafLayer = slot;
+                }
+                return { layerObject, true };
             }
 
             NativeSLAPayloadLike_0x6DCD0C payload;

@@ -49,6 +49,7 @@ namespace motion {
 
     private:
         struct State {
+            ~State();
             std::unordered_map<std::string, tTJSVariant> loadedModules;
             std::string lastLoadedPath;
             tTJSVariant lastLoadedModule;

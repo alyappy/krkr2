@@ -306,15 +306,34 @@ bool tTVPBitmap::Is8bit() const {
 //---------------------------------------------------------------------------
 
 static std::vector<iTVPTexture2D *> _toDeleteTextures;
+static bool _shuttingDownTextureRecycle = false;
+static void TVPNotifyRenderManagersRecycleTick();
+static void TVPFlushRenderManagersRecyclePool();
 
 void iTVPTexture2D::RecycleProcess() {
-    for(iTVPTexture2D *tex : _toDeleteTextures) {
+    std::vector<iTVPTexture2D *> pending;
+    pending.swap(_toDeleteTextures);
+    for(iTVPTexture2D *tex : pending) {
+        if(!_shuttingDownTextureRecycle && tex->TryRecycleToPool()) {
+            continue;
+        }
         delete tex;
     }
-    _toDeleteTextures.clear();
+    if(!_shuttingDownTextureRecycle) {
+        TVPNotifyRenderManagersRecycleTick();
+    }
 }
+
+static void TVPReleaseTexture2DAtExit() {
+    _shuttingDownTextureRecycle = true;
+    iTVPTexture2D::RecycleProcess();
+    TVPFlushRenderManagersRecyclePool();
+    // Drain anything queued during pool flush.
+    iTVPTexture2D::RecycleProcess();
+}
+
 static tTVPAtExit TVPReleaseTexture2D(TVP_ATEXIT_PRI_RELEASE + 500,
-                                      iTVPTexture2D::RecycleProcess);
+                                      TVPReleaseTexture2DAtExit);
 
 void iTVPTexture2D::Release() {
     if(RefCount == 1)
@@ -4817,6 +4836,24 @@ void TVPRegisterRenderManager(const char *name, iTVPRenderManager *(*func)()) {
         _RenderManagerFactory = new std::map<
             ttstr, std::pair<iTVPRenderManager *(*)(), iTVPRenderManager *>>;
     _RenderManagerFactory->emplace(name, std::make_pair(func, nullptr));
+}
+
+static void TVPNotifyRenderManagersRecycleTick() {
+    if(!_RenderManagerFactory)
+        return;
+    for(auto &entry : *_RenderManagerFactory) {
+        if(entry.second.second)
+            entry.second.second->OnTextureRecycleTick();
+    }
+}
+
+static void TVPFlushRenderManagersRecyclePool() {
+    if(!_RenderManagerFactory)
+        return;
+    for(auto &entry : *_RenderManagerFactory) {
+        if(entry.second.second)
+            entry.second.second->FlushTextureRecyclePool();
+    }
 }
 
 iTVPRenderManager *TVPGetRenderManager(const ttstr &name) {

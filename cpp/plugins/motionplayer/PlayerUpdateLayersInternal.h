@@ -131,9 +131,7 @@ namespace {
         int srcH = 0;
         double srcOX = 0.0;
         double srcOY = 0.0;
-        std::vector<std::uint8_t> decomp;
-        findPSBResourceBySourceName(*snapshot, sourceName, srcW, srcH, decomp,
-                                    srcOX, srcOY);
+        queryPSBSourceGeometry(*snapshot, sourceName, srcW, srcH, srcOX, srcOY);
         node.clipW = srcW;
         node.clipH = srcH;
         node.originX = srcOX;

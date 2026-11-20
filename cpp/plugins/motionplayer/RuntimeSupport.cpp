@@ -29,18 +29,43 @@ namespace motion::detail {
 
     namespace {
 
+        struct SnapshotRegistryEntry {
+            std::shared_ptr<MotionSnapshot> snapshot;
+            int refCount = 0;
+        };
+
         std::mutex &snapshotRegistryMutex() {
             static std::mutex mutex;
             return mutex;
         }
 
-        std::unordered_map<const iTJSDispatch2 *,
-                           std::shared_ptr<MotionSnapshot>> &
+        std::unordered_map<const iTJSDispatch2 *, SnapshotRegistryEntry> &
         snapshotRegistry() {
             static std::unordered_map<const iTJSDispatch2 *,
-                                      std::shared_ptr<MotionSnapshot>>
+                                      SnapshotRegistryEntry>
                 registry;
             return registry;
+        }
+
+        std::unordered_map<std::string, std::weak_ptr<MotionSnapshot>> &
+        pathSnapshotCache() {
+            static std::unordered_map<std::string,
+                                      std::weak_ptr<MotionSnapshot>>
+                cache;
+            return cache;
+        }
+
+        std::string
+        buildSnapshotPathCacheKey(const ttstr &path, tjs_int decryptSeed,
+                                  const tTJSVariantClosure &decryptFunc) {
+            const ttstr placed = TVPGetPlacedPath(path);
+            const std::string canonical =
+                !placed.IsEmpty() ? narrow(placed) : narrow(path);
+            if(canonical.empty()) {
+                return {};
+            }
+            return canonical + "|" + std::to_string(decryptSeed) + "|" +
+                (decryptFunc.Object ? "1" : "0");
         }
 
         struct LogoChainTraceSession {
@@ -1382,6 +1407,12 @@ namespace motion::detail {
         return nullptr;
     }
 
+    MotionSnapshot::~MotionSnapshot() {
+        if(!registeredPsbContainers.empty()) {
+            PSB::unregisterRootResources(registeredPsbContainers);
+        }
+    }
+
     void mergeAttachedSnapshotResources(MotionSnapshot &primary,
                                         const MotionSnapshot &attached) {
         for(const auto &alias : attached.resourceAliases) {
@@ -1393,17 +1424,43 @@ namespace motion::detail {
         for(const auto &[path, resource] : attached.resourcesByPath) {
             primary.resourcesByPath.emplace(path, resource);
         }
-        if(attached.file) {
-            PSB::registerRootResources(
-                { widen(attached.path),
-                  TVPExtractStorageName(widen(attached.path)) },
-                *attached.file);
+        if(attached.file && attached.registeredPsbContainers.empty()) {
+            const std::vector<ttstr> containers = { widen(attached.path),
+                                                    TVPExtractStorageName(
+                                                        widen(attached.path)) };
+            PSB::registerRootResources(containers, *attached.file);
+            primary.registeredPsbContainers.insert(
+                primary.registeredPsbContainers.end(), containers.begin(),
+                containers.end());
         }
     }
 
     std::shared_ptr<MotionSnapshot>
     loadMotionSnapshot(const ttstr &path, const tjs_int decryptSeed,
-                       const tTJSVariantClosure decryptFunc) {
+                       const tTJSVariantClosure decryptFunc,
+                       const bool registerInModuleTable) {
+        const auto cacheKey =
+            buildSnapshotPathCacheKey(path, decryptSeed, decryptFunc);
+        if(!cacheKey.empty()) {
+            std::shared_ptr<MotionSnapshot> cached;
+            {
+                std::lock_guard lock(snapshotRegistryMutex());
+                const auto it = pathSnapshotCache().find(cacheKey);
+                if(it != pathSnapshotCache().end()) {
+                    cached = it->second.lock();
+                    if(!cached) {
+                        pathSnapshotCache().erase(it);
+                    }
+                }
+            }
+            if(cached && cached->attachedSnapshots.empty()) {
+                if(registerInModuleTable) {
+                    registerModuleSnapshot(cached->moduleValue, cached);
+                }
+                return cached;
+            }
+        }
+
         const auto file = loadPSBFile(path, decryptSeed, decryptFunc);
         if(!file) {
             return nullptr;
@@ -1431,8 +1488,9 @@ namespace motion::detail {
         }
         appendResourceAlias(*snapshot, path);
         appendResourceAlias(*snapshot, TVPExtractStorageName(path));
-        PSB::registerRootResources({ path, TVPExtractStorageName(path) },
-                                   *file);
+        snapshot->registeredPsbContainers = { path,
+                                              TVPExtractStorageName(path) };
+        PSB::registerRootResources(snapshot->registeredPsbContainers, *file);
 
         std::vector<std::string> pathParts;
         scanValue(std::const_pointer_cast<PSB::PSBDictionary>(root), pathParts,
@@ -1535,14 +1593,20 @@ namespace motion::detail {
                     resource ? resource->data.size() : 0);
             }
         }
-        registerModuleSnapshot(snapshot->moduleValue, snapshot);
+        if(!cacheKey.empty()) {
+            std::lock_guard lock(snapshotRegistryMutex());
+            pathSnapshotCache()[cacheKey] = snapshot;
+        }
+        if(registerInModuleTable) {
+            registerModuleSnapshot(snapshot->moduleValue, snapshot);
+        }
         return snapshot;
     }
 
     tTJSVariant loadPSBVariant(const ttstr &path, const tjs_int decryptSeed,
                                const tTJSVariantClosure decryptFunc) {
         if(const auto snapshot =
-               loadMotionSnapshot(path, decryptSeed, decryptFunc)) {
+               loadMotionSnapshot(path, decryptSeed, decryptFunc, true)) {
             return snapshot->moduleValue;
         }
 
@@ -1563,7 +1627,9 @@ namespace motion::detail {
         }
 
         std::lock_guard lock(snapshotRegistryMutex());
-        snapshotRegistry()[module.AsObjectNoAddRef()] = snapshot;
+        auto &entry = snapshotRegistry()[module.AsObjectNoAddRef()];
+        entry.snapshot = snapshot;
+        ++entry.refCount;
     }
 
     std::shared_ptr<MotionSnapshot>
@@ -1574,7 +1640,7 @@ namespace motion::detail {
 
         std::lock_guard lock(snapshotRegistryMutex());
         const auto it = snapshotRegistry().find(module.AsObjectNoAddRef());
-        return it != snapshotRegistry().end() ? it->second : nullptr;
+        return it != snapshotRegistry().end() ? it->second.snapshot : nullptr;
     }
 
     void unregisterModuleSnapshot(const tTJSVariant &module) {
@@ -1583,12 +1649,19 @@ namespace motion::detail {
         }
 
         std::lock_guard lock(snapshotRegistryMutex());
-        snapshotRegistry().erase(module.AsObjectNoAddRef());
+        const auto it = snapshotRegistry().find(module.AsObjectNoAddRef());
+        if(it == snapshotRegistry().end()) {
+            return;
+        }
+        if(--it->second.refCount <= 0) {
+            snapshotRegistry().erase(it);
+        }
     }
 
     void clearModuleSnapshots() {
         std::lock_guard lock(snapshotRegistryMutex());
         snapshotRegistry().clear();
+        pathSnapshotCache().clear();
     }
 
     tTJSVariant makeArray(const std::vector<tTJSVariant> &items) {

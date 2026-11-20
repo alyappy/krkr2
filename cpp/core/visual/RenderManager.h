@@ -133,6 +133,8 @@ public:
     virtual uint32_t GetPoint(int x, int y) = 0;
     virtual void SetPoint(int x, int y, uint32_t clr) = 0;
     virtual bool IsStatic() = 0; // aka. is readonly
+    virtual bool CanUpdateInPlace() { return !IsStatic(); }
+    virtual bool TryRecycleToPool() { return false; }
     virtual bool IsOpaque() = 0;
     // virtual void RefreshBitmap() = 0;
     virtual cocos2d::Texture2D *
@@ -248,6 +250,8 @@ public:
 
     virtual bool IsSoftware() { return false; }
     virtual const char *GetName() = 0;
+    virtual void OnTextureRecycleTick() {}
+    virtual void FlushTextureRecyclePool() {}
 
     virtual bool GetRenderStat(unsigned int &drawCount, uint64_t &vmemsize) = 0;
     virtual bool GetTextureStat(iTVPTexture2D *texture, uint64_t &vmemsize) {

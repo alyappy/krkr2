@@ -43,6 +43,9 @@ namespace motion {
             nodes[ci].flags &= ~0x01;
             nodes[ci].accumulated.dirty = false;
         }
+        for(auto &entry : _runtime->parameterEntries) {
+            entry.mode = 0;
+        }
         for(auto &evalData : _runtime->perNodeEvalData) {
             evalData.dirtyFlag = 0;
         }
@@ -165,6 +168,9 @@ namespace motion {
         for(size_t ci = 1; ci < nodes.size(); ++ci) {
             nodes[ci].flags &= ~0x01; // node+44
             nodes[ci].accumulated.dirty = false; // node+1504
+        }
+        for(auto &entry : _runtime->parameterEntries) {
+            entry.mode = 0;
         }
 
         // Clear legacy local scratch flags.

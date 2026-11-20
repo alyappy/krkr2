@@ -29,10 +29,10 @@ namespace PSB {
     tTJSBinaryStream *PSBMedia::Open(const ttstr &name, tjs_uint32 flags) {
         const auto found = _resources.find(name.AsStdString());
         if((flags & TJS_BS_ACCESS_MASK) != TJS_BS_READ ||
-           found == _resources.end())
+           found == _resources.end() || !found->second)
             TVPThrowExceptionMessage(TVPCannotOpenStorage, name);
         auto memoryStream = std::make_unique<tTVPMemoryStream>();
-        const auto &res = found->second;
+        const auto &res = *found->second;
         memoryStream->WriteBuffer(res.data.data(), res.data.size());
         memoryStream->Seek(0, TJS_BS_SEEK_SET);
         return memoryStream.release();
@@ -58,6 +58,22 @@ namespace PSB {
 
     void PSBMedia::add(const std::string &name,
                        const std::shared_ptr<PSBResource> &resource) {
-        this->_resources[name] = *resource;
+        if(!resource) {
+            return;
+        }
+        this->_resources[name] = resource;
+    }
+
+    void PSBMedia::removeByPrefix(const std::string &prefix) {
+        if(prefix.empty()) {
+            return;
+        }
+        for(auto it = _resources.begin(); it != _resources.end();) {
+            if(it->first.compare(0, prefix.size(), prefix) == 0) {
+                it = _resources.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 } // namespace PSB

@@ -357,10 +357,6 @@ namespace motion {
             entries.insert(entries.end(),
                            std::make_move_iterator(childEntries.begin()),
                            std::make_move_iterator(childEntries.end()));
-            G_PluginLog.debug(
-                "appendPreparedRenderItems: merged {} child render items "
-                "(foreign nodeIndex space; 参考 sdl3 子 motion 独立渲染上下文)",
-                childEntries.size());
             detail::logoChainTraceLogf(motionPath, "prepare.childMerge",
                                        "0x6C2334/0x6D4F00", _clampedEvalTime,
                                        "childMotionPath={} appendedAtNode={} "

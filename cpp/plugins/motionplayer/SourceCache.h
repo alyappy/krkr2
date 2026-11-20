@@ -41,6 +41,7 @@ namespace motion {
             std::string key;
             std::string resolvedKey;
             int blendMode = 0;
+            bool isTinted = false;
             std::array<std::uint32_t, 4> packedColors{ 0xFF808080u, 0xFF808080u,
                                                        0xFF808080u,
                                                        0xFF808080u };
@@ -48,6 +49,7 @@ namespace motion {
             tTJSVariant sourceObject;
             std::shared_ptr<tTVPBaseBitmap> backingBitmap;
             iTVPTexture2D *sourceTexture = nullptr;
+            std::size_t imageBytes = 0;
         };
 
         SourceCache();
@@ -83,16 +85,29 @@ namespace motion {
                   const std::array<std::uint32_t, 4> &packedColors) const;
 
     private:
+        struct BaseBitmapEntry {
+            std::string key;
+            std::shared_ptr<tTVPBaseBitmap> bitmap;
+            std::size_t bytes = 0;
+        };
+
         Entry *findEntry(const std::string &key, int blendMode,
                          const std::array<std::uint32_t, 4> &packedColors);
+        Entry *findTintedEntry(const std::string &key, int blendMode);
         Entry *findEntryByKey(const std::string &key);
         Entry &ensureEntry(const std::string &key,
                            const std::string &resolvedKey, int blendMode,
-                           const std::array<std::uint32_t, 4> &packedColors);
+                           const std::array<std::uint32_t, 4> &packedColors,
+                           bool isTinted);
+        std::shared_ptr<tTVPBaseBitmap>
+        loadOrGetBaseBitmap(const std::string &key);
         bool ensureEntryBackingBitmap(
             Entry &entry, const std::string &key, int blendMode,
-            const std::array<std::uint32_t, 4> &packedColors);
+            const std::array<std::uint32_t, 4> &packedColors,
+            bool &contentDirty);
         void releaseEntryTexture(Entry &entry);
+        void releaseEntryResources(Entry &entry);
+        void evictEntriesIfNeeded();
         tTJSVariant loadRawSourceVariant(const ttstr &name,
                                          std::string &resolvedKey) const;
 
@@ -104,6 +119,9 @@ namespace motion {
         detail::PlayerRuntime *_runtime = nullptr;
         ResourceManager *_resourceManager = nullptr;
         std::list<Entry> _entries;
+        std::size_t _totalEntryBytes = 0;
+        std::list<BaseBitmapEntry> _baseBitmaps;
+        std::size_t _totalBaseBitmapBytes = 0;
     };
 
     class ObjSource {

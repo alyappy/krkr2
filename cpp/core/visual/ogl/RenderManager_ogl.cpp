@@ -115,6 +115,7 @@ static std::unordered_set<std::string> sTVPGLExtensions;
 // some quick check flags
 static bool GL_CHECK_unpack_subimage;
 static bool GL_CHECK_shader_framebuffer_fetch;
+static bool GL_CHECK_texture_npot;
 
 bool TVPCheckGLExtension(const std::string &extname) {
     return sTVPGLExtensions.find(extname) != sTVPGLExtensions.end();
@@ -228,6 +229,22 @@ static void TVPInitGLExtensionFunc() {
         TVPCheckGLExtension("GL_EXT_shader_framebuffer_fetch") ||
         TVPCheckGLExtension("GL_ARM_shader_framebuffer_fetch") ||
         TVPCheckGLExtension("GL_NV_shader_framebuffer_fetch");
+    GL_CHECK_texture_npot = TVPCheckGLExtension("GL_OES_texture_npot") ||
+        TVPCheckGLExtension("GL_ARB_texture_non_power_of_two");
+    if(!GL_CHECK_texture_npot) {
+        if(const auto *ver =
+               reinterpret_cast<const char *>(glGetString(GL_VERSION))) {
+            // OpenGL ES 3.0+ and desktop OpenGL 2.0+ support NPOT FBO
+            // textures with GL_CLAMP_TO_EDGE and no mipmaps.
+            if(std::strncmp(ver, "OpenGL ES ", 10) == 0) {
+                if(ver[10] >= '3' && ver[10] <= '9') {
+                    GL_CHECK_texture_npot = true;
+                }
+            } else if(ver[0] >= '2' && ver[0] <= '9') {
+                GL_CHECK_texture_npot = true;
+            }
+        }
+    }
 
     if(GL::glGetProcAddress) {
 #ifdef _MSC_VER
@@ -489,6 +506,20 @@ static unsigned int power_of_two(unsigned int input, unsigned int value = 32) {
         value <<= 1;
     }
     return value;
+}
+static unsigned int align_mutable_tex_dim(unsigned int input,
+                                          unsigned int minSize = 32) {
+    if(input <= minSize) {
+        return minSize;
+    }
+    if(GL_CHECK_texture_npot) {
+        const unsigned int aligned = (input + 63u) & ~63u;
+        if(TVPMaxTextureSize > 0 && aligned > TVPMaxTextureSize) {
+            return TVPMaxTextureSize;
+        }
+        return aligned;
+    }
+    return power_of_two(input, minSize);
 }
 
 static void _glBindTexture2D(GLuint t) {
@@ -881,8 +912,8 @@ public:
 
 protected:
     TVPTextureFormat::e Format;
-    unsigned int internalW;
-    unsigned int internalH;
+    unsigned int internalW = 0;
+    unsigned int internalH = 0;
     unsigned char *PixelData = nullptr; // read only
     int PixelDataCounter = 0;
     float _scaleW = 1, _scaleH = 1;
@@ -903,7 +934,10 @@ protected:
     }
 
     ~tTVPOGLTexture2D() override {
-        _totalVMemSize -= internalW * internalH * getPixelSize();
+        if(internalW && internalH) {
+            _totalVMemSize -=
+                static_cast<uint64_t>(internalW) * internalH * getPixelSize();
+        }
         if(PixelData)
             delete[] PixelData;
         if(texture)
@@ -967,9 +1001,14 @@ protected:
         glTexImage2D(GL_TEXTURE_2D, 0, internalfmt, intw, inth, 0, pixfmt,
                      GL_UNSIGNED_BYTE, pixel);
 
+        if(internalW && internalH) {
+            _totalVMemSize -=
+                static_cast<uint64_t>(internalW) * internalH * getPixelSize();
+        }
         internalW = intw;
         internalH = inth;
-        _totalVMemSize += internalW * internalH * getPixelSize();
+        _totalVMemSize +=
+            static_cast<uint64_t>(internalW) * internalH * getPixelSize();
         CHECK_GL_ERROR_DEBUG();
     }
 
@@ -1692,12 +1731,116 @@ public:
     void SetSize(unsigned int w, unsigned int h) override { assert(false); }
 
     bool IsStatic() override { return true; }
+    bool CanUpdateInPlace() override {
+        return !IsCompressed && _scaleW == 1.f && _scaleH == 1.f;
+    }
 };
+
+class tTVPOGLTexture2D_mutatble;
+
+namespace {
+    struct PooledMutableGLTexture {
+        tTVPOGLTexture2D_mutatble *tex = nullptr;
+        uint64_t bytes = 0;
+        int idleFrames = 0;
+    };
+
+    constexpr size_t kMaxMutablePoolEntries = 4;
+    constexpr uint64_t kMaxMutablePoolTotalBytes = 32ULL * 1024ULL * 1024ULL;
+    constexpr uint64_t kMaxMutablePoolSingleBytes = 16ULL * 1024ULL * 1024ULL;
+    constexpr int kMaxMutablePoolIdleFrames = 60;
+
+    std::vector<PooledMutableGLTexture> &mutableGLTexturePool() {
+        static std::vector<PooledMutableGLTexture> pool;
+        return pool;
+    }
+
+    uint64_t &mutableGLTexturePoolBytes() {
+        static uint64_t totalBytes = 0;
+        return totalBytes;
+    }
+} // namespace
 
 class tTVPOGLTexture2D_mutatble : public tTVPOGLTexture2D {
     bool IsTextureDirty;
 
 public:
+    bool TryRecycleToPool() override {
+        if(!texture || IsCompressed || _scaleW != 1.f || _scaleH != 1.f ||
+           Format != TVPTextureFormat::RGBA || internalW < 256 ||
+           internalH < 256) {
+            return false;
+        }
+        const uint64_t bytes =
+            static_cast<uint64_t>(internalW) * internalH * 4ULL;
+        auto &pool = mutableGLTexturePool();
+        auto &poolBytes = mutableGLTexturePoolBytes();
+        if(bytes > kMaxMutablePoolSingleBytes ||
+           pool.size() >= kMaxMutablePoolEntries ||
+           poolBytes + bytes > kMaxMutablePoolTotalBytes) {
+            return false;
+        }
+        if(PixelData) {
+            delete[] PixelData;
+            PixelData = nullptr;
+        }
+        PixelDataCounter = 0;
+        IsTextureDirty = false;
+        pool.push_back({ this, bytes, 0 });
+        poolBytes += bytes;
+        return true;
+    }
+
+    static tTVPOGLTexture2D_mutatble *
+    AcquireFromPool(unsigned int w, unsigned int h, unsigned int intw,
+                    unsigned int inth, TVPTextureFormat::e fmt) {
+        if(fmt != TVPTextureFormat::RGBA) {
+            return nullptr;
+        }
+        auto &pool = mutableGLTexturePool();
+        auto &poolBytes = mutableGLTexturePoolBytes();
+        for(auto it = pool.begin(); it != pool.end(); ++it) {
+            auto *tex = it->tex;
+            if(tex && tex->internalW == intw && tex->internalH == inth &&
+               tex->Format == fmt) {
+                poolBytes -= it->bytes;
+                pool.erase(it);
+                tex->Width = static_cast<tjs_int>(w);
+                tex->Height = static_cast<tjs_int>(h);
+                tex->RefCount = 1;
+                tex->IsTextureDirty = false;
+                tex->PixelDataCounter = 0;
+                return tex;
+            }
+        }
+        return nullptr;
+    }
+
+    static void AgeAndEvictPool() {
+        auto &pool = mutableGLTexturePool();
+        auto &poolBytes = mutableGLTexturePoolBytes();
+        for(auto it = pool.begin(); it != pool.end();) {
+            if(++it->idleFrames > kMaxMutablePoolIdleFrames) {
+                poolBytes -= it->bytes;
+                auto *tex = it->tex;
+                it = pool.erase(it);
+                delete tex;
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    static void FlushPool() {
+        auto &pool = mutableGLTexturePool();
+        auto &poolBytes = mutableGLTexturePoolBytes();
+        std::vector<PooledMutableGLTexture> toFree;
+        toFree.swap(pool);
+        poolBytes = 0;
+        for(auto &entry : toFree) {
+            delete entry.tex;
+        }
+    }
     tTVPOGLTexture2D_mutatble(const void *pixel, int pitch, unsigned int w,
                               unsigned int h, TVPTextureFormat::e format,
                               float sw, float sh) :
@@ -1708,8 +1851,10 @@ public:
         if(!pixel) {
             _scaleW = sw;
             _scaleH = sh;
-            unsigned int intw = power_of_two(w * sw),
-                         inth = power_of_two(h * sh);
+            unsigned int intw = align_mutable_tex_dim(
+                             static_cast<unsigned int>(w * sw)),
+                         inth = align_mutable_tex_dim(
+                             static_cast<unsigned int>(h * sh));
             if(intw < w)
                 _scaleW = (float)intw / w; // use entire texture if possible
             if(inth < h)
@@ -1724,7 +1869,7 @@ public:
         int intw = w, inth = h;
         if(pixel)
             intw = pitch / pixsize;
-        intw = power_of_two(intw), inth = power_of_two(inth);
+        intw = align_mutable_tex_dim(intw), inth = align_mutable_tex_dim(inth);
         if(!pixel || pitch == intw * pixsize) {
             if(inth == h) {
                 InternalInit(pixel, intw, inth, pitch);
@@ -1815,11 +1960,12 @@ public:
     }
 
     void SetSize(unsigned int w, unsigned int h) override {
+        if(PixelData) {
+            delete[] PixelData;
+            PixelData = nullptr;
+        }
+        IsTextureDirty = false;
         if(w > internalW || h > internalH) {
-            if(PixelData) {
-                delete[] PixelData;
-                PixelData = nullptr;
-            }
             InternalInit(nullptr, power_of_two(w), power_of_two(h), 0);
         }
         Width = w;
@@ -2334,7 +2480,8 @@ bool tTVPOGLTexture2D::RestoreNormalSize() {
         GLuint newtex;
         glGenTextures(1, &newtex);
         cocos2d::GL::bindTexture2D(newtex);
-        tjs_int intw = power_of_two(w), inth = power_of_two(h);
+        tjs_int intw = align_mutable_tex_dim(w),
+                inth = align_mutable_tex_dim(h);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, intw, inth, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -2846,6 +2993,16 @@ protected:
                                                  unsigned int w, unsigned int h,
                                                  float sw, float sh,
                                                  TVPTextureFormat::e fmt) {
+        if(!pixel && sw == 1.f && sh == 1.f) {
+            const TVPTextureFormat::e actualFmt =
+                fmt == TVPTextureFormat::RGB ? TVPTextureFormat::RGBA : fmt;
+            const unsigned int intw = align_mutable_tex_dim(w);
+            const unsigned int inth = align_mutable_tex_dim(h);
+            if(auto *reused = tTVPOGLTexture2D_mutatble::AcquireFromPool(
+                   w, h, intw, inth, actualFmt)) {
+                return reused;
+            }
+        }
         return new tTVPOGLTexture2D_mutatble(pixel, pitch, w, h, fmt, sw, sh);
     }
 
@@ -4491,6 +4648,12 @@ public:
 
     const char *GetName() override { return "OpenGL"; }
     bool IsSoftware() override { return false; }
+    void OnTextureRecycleTick() override {
+        tTVPOGLTexture2D_mutatble::AgeAndEvictPool();
+    }
+    void FlushTextureRecyclePool() override {
+        tTVPOGLTexture2D_mutatble::FlushPool();
+    }
     bool GetRenderStat(unsigned int &drawCount, uint64_t &vmemsize) override {
         drawCount = _drawCount;
         _drawCount = 0;

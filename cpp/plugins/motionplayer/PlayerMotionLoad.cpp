@@ -2,6 +2,7 @@
 // Split out for maintainability.
 //
 #include "PlayerInternal.h"
+#include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 
 using namespace motion::internal;
@@ -211,6 +212,7 @@ namespace motion {
             _resourceManagerNative.releaseLayerId(node.layerId2);
         }
         detail::resetNodeTreeKeepRootLike_0x6B56F8(*_runtime);
+        render_detail::releaseRuntimeRenderLayers(*_runtime, false);
     }
 
     void

@@ -319,8 +319,12 @@ namespace motion {
                 continue;
             }
             const double raw = initialParameterRawValueLike_0x6B1ABC(entry.id);
-            entry.value = normalizeParameterValueLike_0x6B1718(entry, raw);
-            entry.mode = 1;
+            const double normalized =
+                normalizeParameterValueLike_0x6B1718(entry, raw);
+            if(entry.value != normalized) {
+                entry.value = normalized;
+                entry.mode |= 1;
+            }
         }
         for(auto &node : _runtime->nodes) {
             if(node.parameterizeIndex < 0) {

@@ -39,8 +39,11 @@ namespace PSB {
         void add(const std::string &name,
                  const std::shared_ptr<PSBResource> &resource);
 
+        void removeByPrefix(const std::string &prefix);
+
     private:
         int _ref = 0;
-        std::unordered_map<std::string, PSBResource> _resources;
+        std::unordered_map<std::string, std::shared_ptr<PSBResource>>
+            _resources;
     };
 } // namespace PSB

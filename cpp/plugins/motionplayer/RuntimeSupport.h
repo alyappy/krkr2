@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <list>
 #include <map>
 #include <memory>
 #include <string>
@@ -164,6 +165,22 @@ namespace motion::detail {
     };
 
     struct MotionSnapshot {
+        struct CachedSourceGeometry {
+            int width = 0;
+            int height = 0;
+            double originX = 0.0;
+            double originY = 0.0;
+            bool found = false;
+        };
+        struct DecodedPsbAtlas {
+            int width = 0;
+            int height = 0;
+            bool isBgra = false;
+            std::vector<std::uint8_t> pixels;
+        };
+
+        ~MotionSnapshot();
+
         std::string path;
         std::shared_ptr<PSB::PSBFile> file;
         std::shared_ptr<const PSB::PSBDictionary> root;
@@ -204,10 +221,16 @@ namespace motion::detail {
         std::unordered_map<std::string, TimelineControlBinding>
             timelineControlByLabel;
         std::vector<std::string> resourceAliases;
+        std::vector<ttstr> registeredPsbContainers;
         double width = 0.0;
         double height = 0.0;
         // 参考 sdl3/emotefile::_attach（不编译）: MultiCache 复合 PSB 交叉引用
         std::vector<std::shared_ptr<MotionSnapshot>> attachedSnapshots;
+        mutable std::unordered_map<std::string, CachedSourceGeometry>
+            sourceGeometryCache;
+        mutable std::list<std::pair<std::string, DecodedPsbAtlas>>
+            decodedAtlasLru;
+        mutable std::size_t decodedAtlasBytes = 0;
     };
 
     // Aligned to libkrkr2.so Player+1296 std::vector<LabelEntry> written by
@@ -246,6 +269,7 @@ namespace motion::detail {
             bool isDirty = false;
             tjs_int absolute = 0;
             tjs_int hitThreshold = 256;
+            std::uint64_t lastUsedRenderPass = 0;
             tTJSVariant layerObject;
             tTJSVariant layerGetter;
             std::array<float, 4> clipRect{ 0.f, 0.f, 0.f, 0.f };
@@ -256,6 +280,7 @@ namespace motion::detail {
                                                        0xFF808080u };
         };
         std::unordered_map<tjs_int, LayerRenderState> renderLayerStates;
+        std::uint64_t renderPassCounter = 0;
         std::vector<tTJSVariant> backgrounds;
         std::vector<tTJSVariant> captions;
         std::unordered_map<std::string, bool> disabledSelectorTargets;
@@ -266,6 +291,9 @@ namespace motion::detail {
         tTJSVariant internalRenderLayer;
         // Reusable work layer for sub_6C4E28-style per-item local clipping.
         tTJSVariant scratchWorkLayer;
+        // Reusable scratch pools for per-frame buffered leaf/composed layers.
+        std::vector<tTJSVariant> scratchLeafLayers;
+        std::vector<tTJSVariant> scratchComposedLayers;
         std::array<double, 6> drawAffineMatrix{ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         tjs_int nextLayerId = 1;
         tjs_int clearColor = 0;
@@ -485,7 +513,8 @@ namespace motion::detail {
 
     std::shared_ptr<MotionSnapshot> loadMotionSnapshot(
         const ttstr &path, tjs_int decryptSeed,
-        tTJSVariantClosure decryptFunc = tTJSVariantClosure(nullptr, nullptr));
+        tTJSVariantClosure decryptFunc = tTJSVariantClosure(nullptr, nullptr),
+        bool registerInModuleTable = false);
     tTJSVariant loadPSBVariant(
         const ttstr &path, tjs_int decryptSeed,
         tTJSVariantClosure decryptFunc = tTJSVariantClosure(nullptr, nullptr));

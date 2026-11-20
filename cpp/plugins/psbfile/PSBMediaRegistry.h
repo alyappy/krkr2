@@ -20,4 +20,7 @@ namespace PSB {
     void registerRootResources(const ttstr &container, const PSBFile &file);
     void registerRootResources(const std::vector<ttstr> &containers,
                                const PSBFile &file);
+
+    void unregisterRootResources(const ttstr &container);
+    void unregisterRootResources(const std::vector<ttstr> &containers);
 } // namespace PSB

@@ -11,6 +11,7 @@
 #define _USE_MATH_DEFINES
 #include "tjsCommHead.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <stdlib.h>
@@ -525,9 +526,10 @@ iTVPTexture2D *TVPAcquireCompatibleTexture(iTVPRenderManager *dstMgr,
         (h == 1 ||
          static_cast<const tjs_uint8 *>(srcTex->GetScanLineForRead(1)) ==
              static_cast<const tjs_uint8 *>(row0) + srcPitch);
-    const auto canReuse = reusableDstTex && !reusableDstTex->IsStatic() &&
-        reusableDstTex->IsIndependent() && reusableDstTex->GetWidth() == w &&
-        reusableDstTex->GetHeight() == h && reusableDstTex->GetFormat() == fmt;
+    const auto canReuse = reusableDstTex &&
+        reusableDstTex->CanUpdateInPlace() && reusableDstTex->IsIndependent() &&
+        reusableDstTex->GetWidth() == w && reusableDstTex->GetHeight() == h &&
+        reusableDstTex->GetFormat() == fmt;
     if(contiguous) {
         if(canReuse) {
             reusableDstTex->Update(row0, fmt, srcPitch, tTVPRect(0, 0, w, h));
@@ -601,38 +603,32 @@ void tTVPNativeBaseBitmap::SetSize(tjs_uint w, tjs_uint h, bool keepimage) {
     if(h == 0)
         h = 1;
     if(Bitmap->GetWidth() != w || Bitmap->GetHeight() != h) {
+        iTVPRenderManager *mgr = GetRenderManager();
+        if(!keepimage && mgr && !mgr->IsSoftware() && !Bitmap->IsStatic() &&
+           Bitmap->IsIndependent()) {
+            const tjs_uint iw = Bitmap->GetInternalWidth();
+            const tjs_uint ih = Bitmap->GetInternalHeight();
+            const uint64_t internalArea = static_cast<uint64_t>(iw) * ih;
+            const uint64_t neededArea = static_cast<uint64_t>(w) * h;
+            if(iw >= w && ih >= h &&
+               internalArea <=
+                   std::max<uint64_t>(neededArea * 4ULL, 256ULL * 256ULL)) {
+                Bitmap->SetSize(w, h);
+                FontChanged = true;
+                return;
+            }
+        }
         // create a new bitmap and copy existing bitmap
         iTVPTexture2D *newbitmap;
-        if(keepimage)
-            newbitmap = GetRenderManager()->CreateTexture2D(w, h, Bitmap);
-        else
-            newbitmap = GetRenderManager()->CreateTexture2D(
-                nullptr, 0, w, h, Bitmap->GetFormat());
-#if 0
-		tTVPBitmap *newbitmap = new tTVPBitmap(w, h, Bitmap->GetBPP());
-
-		if(keepimage)
-		{
-			tjs_int pixelsize = Bitmap->Is32bit() ? 4 : 1;
-			tjs_int lh = h < Bitmap->GetHeight() ?
-				h : Bitmap->GetHeight();
-			tjs_int lw = w < Bitmap->GetWidth() ?
-				w : Bitmap->GetWidth();
-			tjs_int cs = lw * pixelsize;
-			tjs_int i;
-			for(i = 0; i < lh; i++)
-			{
-				void * ds = newbitmap->GetScanLine(i);
-				void * ss = Bitmap->GetScanLine(i);
-
-				memcpy(ds, ss, cs);
-			}
-			if( pixelsize == 1 )
-				memcpy(newbitmap->GetPalette(), Bitmap->GetPalette(), sizeof(tjs_uint)*tTVPBitmap::DEFAULT_PALETTE_COUNT);
-		}
-#endif
-        Bitmap->Release();
-        Bitmap = newbitmap;
+        if(keepimage) {
+            newbitmap = mgr->CreateTexture2D(w, h, Bitmap);
+            Bitmap->Release();
+            Bitmap = newbitmap;
+        } else {
+            const TVPTextureFormat::e fmt = Bitmap->GetFormat();
+            Bitmap->Release();
+            Bitmap = mgr->CreateTexture2D(nullptr, 0, w, h, fmt);
+        }
 
         FontChanged = true;
     }

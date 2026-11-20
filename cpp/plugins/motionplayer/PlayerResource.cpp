@@ -2,6 +2,7 @@
 // Split from Player.cpp for maintainability.
 //
 #include "PlayerInternal.h"
+#include "PlayerRenderInternal.h"
 #include "SourceCache.h"
 
 using namespace motion::internal;
@@ -39,6 +40,7 @@ namespace motion {
         if(_runtime->sourceCacheNative) {
             _runtime->sourceCacheNative->clearCache();
         }
+        render_detail::releaseRuntimeRenderLayers(*_runtime, true);
         _runtime->activeMotion.reset();
         _runtime->timelines.clear();
         _runtime->playingTimelineLabels.clear();

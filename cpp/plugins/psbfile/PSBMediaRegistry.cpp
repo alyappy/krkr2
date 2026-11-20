@@ -1,5 +1,7 @@
 #include "PSBMediaRegistry.h"
 
+#include <unordered_map>
+
 #include "PSBMedia.h"
 #include "PSBValue.h"
 #include "StorageIntf.h"
@@ -9,6 +11,7 @@
 namespace PSB {
     namespace {
         PSBMedia *psbMedia = nullptr;
+        std::unordered_map<std::string, int> containerRefCounts;
 
         void registerValueResources(const ttstr &normalizedContainer,
                                     const std::shared_ptr<IPSBValue> &value,
@@ -66,11 +69,30 @@ namespace PSB {
 
             ttstr normalizedContainer = container;
             psbMedia->NormalizeDomainName(normalizedContainer);
+            ++containerRefCounts[normalizedContainer.AsStdString()];
 
             std::vector<std::string> path;
             registerValueResources(normalizedContainer,
                                    std::const_pointer_cast<PSBDictionary>(root),
                                    path);
+        }
+
+        void unregisterRootResourcesForContainer(const ttstr &container) {
+            if(psbMedia == nullptr || container.IsEmpty()) {
+                return;
+            }
+
+            ttstr normalizedContainer = container;
+            psbMedia->NormalizeDomainName(normalizedContainer);
+            const auto key = normalizedContainer.AsStdString();
+            const auto it = containerRefCounts.find(key);
+            if(it != containerRefCounts.end()) {
+                if(--it->second > 0) {
+                    return;
+                }
+                containerRefCounts.erase(it);
+            }
+            psbMedia->removeByPrefix(key + "/");
         }
     } // namespace
 
@@ -86,6 +108,7 @@ namespace PSB {
     }
 
     void deInitPSBMedia() {
+        containerRefCounts.clear();
         if(psbMedia != nullptr) {
             TVPUnregisterStorageMedia(psbMedia);
             psbMedia = nullptr;
@@ -116,5 +139,15 @@ namespace PSB {
     void registerRootResources(const std::vector<ttstr> &containers,
                                const PSBFile &file) {
         registerRootResources(containers, file.getObjects());
+    }
+
+    void unregisterRootResources(const ttstr &container) {
+        unregisterRootResourcesForContainer(container);
+    }
+
+    void unregisterRootResources(const std::vector<ttstr> &containers) {
+        for(const auto &container : containers) {
+            unregisterRootResourcesForContainer(container);
+        }
     }
 } // namespace PSB

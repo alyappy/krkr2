@@ -42,6 +42,9 @@ namespace motion::internal::render_detail {
                               tjs_int value);
     bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
                                int height, tjs_uint32 clearColor);
+    void releaseLayerObjectVariant(tTJSVariant &slot);
+    void releaseRuntimeRenderLayers(motion::detail::PlayerRuntime &runtime,
+                                    bool includeInternalAndScratch = true);
     std::string summarizeLayerChildren(tTJSNI_BaseLayer *layer,
                                        int maxChildren = 12);
     bool shouldUseDirectRenderPathLike_0x6C7440(

@@ -67,6 +67,19 @@ namespace {
     }
 } // namespace
 
+motion::ResourceManager::State::~State() {
+    std::unordered_set<iTJSDispatch2 *> unregistered;
+    for(const auto &[key, module] : loadedModules) {
+        (void)key;
+        if(module.Type() == tvtObject && module.AsObjectNoAddRef() &&
+           unregistered.insert(module.AsObjectNoAddRef()).second) {
+            detail::unregisterModuleSnapshot(module);
+        }
+    }
+    loadedModules.clear();
+    lastLoadedModule.Clear();
+}
+
 motion::ResourceManager::ResourceManager() :
     _state(std::make_shared<State>()) {}
 
@@ -160,6 +173,9 @@ tjs_error motion::ResourceManager::setEmotePSBDecryptFunc(tTJSVariant *,
 
 tTJSVariant motion::ResourceManager::load(ttstr path) const {
     const auto rawPath = path.AsStdString();
+    if(auto existing = findLoadedModule(path); existing.Type() == tvtObject) {
+        return existing;
+    }
     const auto loweredPath = lowercase(rawPath);
     if(loweredPath.find(".mtn") != std::string::npos) {
         G_PluginLog.debug("ResourceManager::load motion: {}", rawPath);
@@ -174,6 +190,13 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
             G_PluginLog.warn("ResourceManager::load({}) failed", rawPath);
         }
         return loaded;
+    }
+
+    const bool alreadyOwned = !collectModuleCacheKeys(_state->loadedModules,
+                                                      loaded.AsObjectNoAddRef())
+                                   .empty();
+    if(alreadyOwned) {
+        detail::unregisterModuleSnapshot(loaded);
     }
 
     for(const auto &key : buildPathCacheKeys(path)) {
@@ -229,6 +252,9 @@ void motion::ResourceManager::clearCache() const {
         return;
     }
 
+    for(const auto &entry : uniqueCachedModules()) {
+        detail::unregisterModuleSnapshot(entry.module);
+    }
     _state->loadedModules.clear();
     _state->lastLoadedPath.clear();
     _state->lastLoadedModule.Clear();
@@ -236,7 +262,6 @@ void motion::ResourceManager::clearCache() const {
     _state->layerNamesById.clear();
     _state->usedLayerIds.clear();
     _state->nextLayerId = 1;
-    detail::clearModuleSnapshots();
 }
 
 tTJSVariant motion::ResourceManager::getLastLoadedModule() const {

@@ -366,6 +366,41 @@ namespace motion::internal::render_detail {
             object->PropSet(TJS_MEMBERENSURE, name, nullptr, &var, object));
     }
 
+    void releaseLayerObjectVariant(tTJSVariant &slot) {
+        if(slot.Type() == tvtObject && slot.AsObjectNoAddRef()) {
+            iTJSDispatch2 *obj = slot.AsObjectNoAddRef();
+            if(auto *layer = resolveNativeLayer(obj)) {
+                layer->SetHasImage(false);
+            }
+            auto closure = slot.AsObjectClosureNoAddRef();
+            if(closure.Object) {
+                closure.Invalidate(0, nullptr, nullptr, nullptr);
+            }
+        }
+        slot.Clear();
+    }
+
+    void releaseRuntimeRenderLayers(motion::detail::PlayerRuntime &runtime,
+                                    bool includeInternalAndScratch) {
+        for(auto &slot : runtime.scratchLeafLayers) {
+            releaseLayerObjectVariant(slot);
+        }
+        runtime.scratchLeafLayers.clear();
+        for(auto &slot : runtime.scratchComposedLayers) {
+            releaseLayerObjectVariant(slot);
+        }
+        runtime.scratchComposedLayers.clear();
+        for(auto &[id, state] : runtime.renderLayerStates) {
+            (void)id;
+            releaseLayerObjectVariant(state.layerObject);
+        }
+        runtime.renderLayerStates.clear();
+        if(includeInternalAndScratch) {
+            releaseLayerObjectVariant(runtime.internalRenderLayer);
+            releaseLayerObjectVariant(runtime.scratchWorkLayer);
+        }
+    }
+
     bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
                                int height, tjs_uint32 clearColor) {
         auto *layer = resolveNativeLayer(layerObject);
@@ -375,6 +410,12 @@ namespace motion::internal::render_detail {
 
         if(!layer->GetHasImage()) {
             layer->SetHasImage(true);
+        }
+        if(auto *mainImg = layer->GetMainImage(); mainImg &&
+           (static_cast<int>(mainImg->GetWidth()) != width ||
+            static_cast<int>(mainImg->GetHeight()) != height)) {
+            mainImg->SetSize(static_cast<tjs_uint>(width),
+                             static_cast<tjs_uint>(height), false);
         }
         layer->SetImageSize(static_cast<tjs_uint>(width),
                             static_cast<tjs_uint>(height));
@@ -510,16 +551,21 @@ namespace motion::internal::render_detail {
         const motion::detail::PlayerRuntime::PreparedRenderItem &entry,
         int canvasWidth, int canvasHeight, RenderClipRect &out,
         std::string *failureReason) {
-        (void)canvasWidth;
-        (void)canvasHeight;
-        // sub_6C4E28 writes the render item's own paint/viewport bounds to
-        // the build-stage clip rect. It does not clamp this intermediate
-        // Layer rect to the final target canvas; final target clipping
-        // happens when the prepared Layer is submitted by sub_6C7440.
         float clipLeft = entry.paintBox[0];
         float clipTop = entry.paintBox[1];
         float clipRight = entry.paintBox[2];
         float clipBottom = entry.paintBox[3];
+
+        // Clamp intermediate buffered Layer bounds to the target canvas so
+        // zoomed-in backgrounds (e.g. 4512x3208 on a 1920x1080 canvas) never
+        // allocate huge offscreen 8192x4096 textures for pixels that will be
+        // clipped away on blit to renderLayer.
+        if(canvasWidth > 0 && canvasHeight > 0) {
+            clipLeft = std::max(clipLeft, 0.0f);
+            clipTop = std::max(clipTop, 0.0f);
+            clipRight = std::min(clipRight, static_cast<float>(canvasWidth));
+            clipBottom = std::min(clipBottom, static_cast<float>(canvasHeight));
+        }
 
         if(entry.hasViewport && entry.viewport[2] >= entry.viewport[0] &&
            entry.viewport[3] >= entry.viewport[1]) {
